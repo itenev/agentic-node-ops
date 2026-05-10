@@ -64,10 +64,10 @@ Avoid having the LLM continuously poll raw telemetry or make first-order detecti
                              │           │
               read-only APIs │           │ notifications
                              ▼           ▼
-        ┌────────────────────────┐   ┌───────────────────────────┐
-        │ Docker / Node APIs     │   │ Tier 1: Discord           │
-        │ journalctl             │   │ Tier 2: ntfy.sh (critical)│
-        │ beacon REST APIs       │   └───────────────────────────┘
+        ┌────────────────────────┐   ┌──────────────────────┐
+        │ Docker / Node APIs     │   │ Tier 1: Discord       │
+        │ journalctl             │   │ Tier 2: ntfy.sh       │
+        │ beacon REST APIs       │   └──────────────────────┘
         │ execution RPC          │
         └────────────────────────┘
 
@@ -146,6 +146,8 @@ hermes-agent      →  reads jsonl, processes, writes to SQLite incidents table
 The jsonl file is the handoff boundary. No locking, no WAL coordination, no `SQLITE_BUSY` risk. The file grows until compacted — hermes-agent archives processed lines to `alerts.jsonl.YYYY-MM-DD` on a daily schedule.
 
 If hermes-agent is down, the receiver continues appending. On restart, the agent resumes from `last_read_offset` and processes the backlog before accepting new alerts.
+
+**Deduplication note:** The webhook receiver needs read-only access to the SQLite `incidents` table for `db.get_last_processed()` lookups (deduplication runs at receive time, before writing to jsonl). Mount the SQLite file as read-only in the receiver container, or open it with `?mode=ro`. The receiver never writes to it — all inserts go through hermes-agent.
 
 ### Context Snapshot Fetch Behavior
 
@@ -269,7 +271,7 @@ def should_process(alert, db):
   severity: high
 ```
 
-**Note on `SlashingProtectionDBError`:** No `for` clause is intentional. A slashing protection DB error must fire immediately on first log match — a 30-second confirmation window is a 30-second window in which the validator could act on a corrupted or absent protection file. Use `|=` (exact string filter) not `|~` (regex) for literal phrase matching — it is faster and unambiguous.
+**Note on `SlashingProtectionDBError`:** No `for` clause is intentional. A slashing protection DB error must fire on the first Loki ruler evaluation after the log line appears — a `for` confirmation window is a risk window in which the validator could act on a corrupted or absent protection file. Actual latency is bounded by the Loki ruler evaluation interval (typically 15-30s), not by any Prometheus-style `for` delay. Use `|=` (exact string filter) not `|~` (regex) for literal phrase matching — it is faster and unambiguous.
 
 ### Hermes Response Protocol
 
@@ -532,30 +534,60 @@ services:
       - hermes-monitoring
 ```
 
-**Phase 4 socket-proxy migration note:** When the Runbook Executor is introduced (Phase 4), `POST: 0` must be relaxed to allow whitelisted restart operations. Do not simply set `POST: 1` — that would allow all mutations. Instead, configure per-endpoint allowlisting:
+**Phase 4 socket-proxy migration note:** When the Runbook Executor is introduced (Phase 4), `POST: 0` must be relaxed to allow container restart operations. The `tecnativa/docker-socket-proxy` image only supports coarse toggles — it cannot allowlist individual POST endpoints like `/containers/{name}/restart` while blocking others. Setting `POST: 1` would enable *all* mutations (create, delete, exec, etc.), which is too broad.
+
+Options for Phase 4:
+
+1. **nginx sidecar** — front the socket-proxy with a small nginx container that only proxies `POST /containers/*/restart` and `GET /containers/*`:
 
 ```yaml
-# Phase 4+ socket-proxy environment additions:
-POST: 1                        # enable POST globally...
-ALLOW_RESTARTS: 1              # ...but tecnativa proxy further restricts to restart endpoint
-# If using a proxy that supports path allowlisting, restrict to:
-# POST /containers/{name}/restart  only
+# Phase 4+ nginx sidecar for path-level filtering
+  hermes-api-proxy:
+    image: nginx:alpine
+    volumes:
+      - ./nginx-socket.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "2376:2376"
+    networks:
+      - hermes-monitoring
+    depends_on:
+      - docker-socket-proxy
 ```
 
-Review the socket-proxy image's allowlist documentation before Phase 4 rollout. The principle is: whitelist exactly the operations the Runbook Executor needs, nothing broader.
+```nginx
+# nginx-socket.conf — only allow restart POST and any GET
+upstream docker_socket {
+    server docker-socket-proxy:2375;
+}
+
+server {
+    listen 2376;
+    # Allow only restart POST and any GET
+    if ($request_method = POST) {
+        set $allowed 0;
+        if ($request_uri ~ "^/containers/[^/]+/restart$") {
+            set $allowed 1;
+        }
+        if ($allowed = 0) { return 403; }
+    }
+    location / { proxy_pass http://docker_socket; }
+}
+```
+
+2. **Custom sidecar** — write a minimal Go/Python proxy that validates each request path against an allowlist before forwarding to the socket-proxy.
+
+3. **Accept `POST: 1`** — if the risk of an LLM hallucinating a `docker create` or `docker rm` is deemed acceptable for Phase 4, set `POST: 1` with the understanding that the Runbook Executor's approval gates provide the real safety boundary.
+
+The principle is: the narrowest possible write surface, audited explicitly at Phase 4 rollout.
 
 ### Compose configuration
 
 ```yaml
 # docker-compose (single host, eth-docker conventions)
+# Note: eth-docker manages its own stack on a separate Docker network.
+# This compose defines the monitoring augmentation layer.
+# See "Note on eth-docker network integration" below for cross-network connectivity.
 services:
-  execution:    # managed by eth-docker
-  consensus:    # managed by eth-docker
-  validator:    # managed by eth-docker
-  prometheus:   # managed by eth-docker
-  grafana:      # managed by eth-docker
-  loki:         # managed by eth-docker
-  alertmanager: # managed by eth-docker
 
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy
@@ -615,7 +647,28 @@ networks:
   hermes-monitoring:
 ```
 
+**Note on eth-docker network integration:** eth-docker manages its own Docker network. For the monitoring containers (Prometheus, Loki, Alertmanager) to be reachable by the `hermes-monitoring` network, connect the eth-docker network to it:
+
+```bash
+# After starting both stacks
+docker network connect eth-docker_default webhook-receiver
+docker network connect eth-docker_default hermes-agent
+```
+
+Or declare it as external in this compose:
+
+```yaml
+networks:
+  hermes-monitoring:
+  eth-docker_default:
+    external: true
+```
+
+Then reference it on any service that needs cross-network communication (e.g. `hermes-agent` connecting to `http://prometheus:9090`).
+
 **Note on `depends_on`:** `condition: service_started` controls startup ordering only, not runtime availability. The webhook receiver and hermes-agent are designed to tolerate their dependencies being temporarily unavailable at runtime — the jsonl queue and context fallback mechanisms handle this. Do not use `condition: service_healthy` unless health checks are explicitly configured on each dependency.
+
+The hermes-agent's `depends_on: webhook-receiver` ensures the receiver container is created and started first so the shared `alerts.jsonl` file path is initialized. At runtime, if the receiver crashes and restarts, the agent continues reading from the jsonl file normally — the dependency relationship does not cause the agent to stop.
 
 ---
 
@@ -631,16 +684,17 @@ networks:
 ```
 low / medium / high  →  Discord only
 critical             →  Discord + ntfy (Priority: urgent)
-slashing_risk        →  Discord + ntfy (Priority: urgent), regardless of severity field
+slashing alerts      →  Discord + ntfy (Priority: urgent), regardless of severity field
+                       (meta-category: ValidatorDoubleInstance, SlashingProtectionDBError, ClockSkewExcessive)
 ```
 
 ### Discord
 
-Primary operator interface. Renders rich embeds with severity colour, diagnostics as inline fields, proposed actions, and forensic evidence paths for slashing incidents. Uses `@here` on critical and slashing alerts for in-channel push notification as a secondary wake-up (belt-and-suspenders alongside ntfy).
+Primary operator interface. Renders rich embeds with severity colour, diagnostics as inline fields, proposed actions, and forensic evidence paths for slashing incidents. Uses `@here` for critical alerts and `@everyone` for slashing alerts. Note: `@here` only notifies online members in Discord — it is a secondary wake-up. ntfy.sh (Tier 2) is the primary wake-up for critical and slashing alerts, as it bypasses mobile Do Not Disturb settings.
 
 **Current implementation:** webhook (send-only). Returns Discord message ID for future edits (marking resolved).
 
-**Phase 5 migration:** swap webhook transport for Bot API to support interaction buttons for approval flow. Payload shape (content + embeds) is identical — only the transport changes.
+**Phase 4 migration:** swap webhook transport for Bot API to support interaction buttons for approval flow. Payload shape (content + embeds) is identical — only the transport changes. The Bot token must be provisioned before Phase 4 rollout.
 
 ### ntfy.sh
 
@@ -679,7 +733,7 @@ NTFY_PASSWORD         # optional
 | Visualization | Grafana |
 | Agent | Hermes Agent (nousresearch/hermes-agent) |
 | Runtime | Docker Compose |
-| Notifications (Tier 1) | Discord (webhook → Bot in Phase 5) |
+| Notifications (Tier 1) | Discord (webhook → Bot in Phase 4) |
 | Notifications (Tier 2) | ntfy.sh (critical + slashing only) |
 | Alert queue | append-only JSONL file (webhook-receiver writes) |
 | State / Memory | SQLite WAL (hermes-agent sole writer) |
@@ -695,7 +749,7 @@ NTFY_PASSWORD         # optional
 | 1 | Webhook receiver + alert normalization + jsonl queue | Design complete |
 | 2 | Hermes integration + runbook matching + operator notifications | Design complete |
 | 3 | Memory layer + feedback loop + host fingerprints | Design complete |
-| 4 | Tier 2 suggested actions + approval state machine + socket-proxy Phase 4 migration | Design complete (§5, §8) |
+| 4 | Tier 2 suggested actions + approval state machine + socket-proxy Phase 4 migration + Discord Bot API migration | Design complete (§5, §8, §9) |
 | 5 | Runbook synthesis from historical incidents | Design pending |
 | 6 | Semi-autonomous remediation with confidence scoring | Future |
 
