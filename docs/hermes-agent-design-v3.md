@@ -276,6 +276,7 @@ def should_process(alert, db):
 ### Hermes Response Protocol
 
 **Step 1 — IMMEDIATE (< 5 seconds)**
+
 1. Suspend normal queue processing — slashing is priority 0
 2. Page operator via ALL configured channels simultaneously (Discord + ntfy urgent)
 3. Do NOT attempt any remediation
@@ -657,7 +658,14 @@ services:
     environment:
       # Phase 4: point at nginx filter, not socket-proxy directly
       - DOCKER_HOST=tcp://hermes-docker-proxy:2376
+
+  webhook-receiver:
+    environment:
+      # Phase 4: also route through the filter for consistency
+      - DOCKER_HOST=tcp://hermes-docker-proxy:2376
 ```
+
+**Note:** The nginx filter allows `GET:*` so the webhook-receiver gains no extra access through the proxy — all Docker API traffic goes through a single auditable point.
 
 **Option B — custom sidecar**
 
@@ -693,8 +701,10 @@ services:
 
   webhook-receiver:
     build: ./webhook-receiver
-    ports:
-      - "8090:8090"
+    # ports:                    # Remove host port mapping in production.
+    #   - "8090:8090"           # Alertmanager reaches webhook-receiver via
+                               # Docker DNS on the shared network:
+                               # http://webhook-receiver:8090
     volumes:
       - hermes-data:/var/hermes
     environment:
@@ -703,7 +713,7 @@ services:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
     networks:
       - hermes-monitoring
-      - ethd_default        # reach eth-docker's Prometheus for context snapshots
+      - ethd_default            # reach eth-docker's Prometheus for context snapshots
     depends_on:
       docker-socket-proxy:
         condition: service_started
