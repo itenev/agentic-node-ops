@@ -18,6 +18,7 @@ The system separates responsibilities into four planes:
 **Core design principle: Prometheus Detects. Hermes Reasons.**
 
 Avoid having the LLM continuously poll raw telemetry or make first-order detection decisions. Instead:
+
 - Deterministic systems detect known failures
 - Hermes performs contextual enrichment, root-cause correlation, operator explanation, and runbook selection
 
@@ -70,15 +71,16 @@ Avoid having the LLM continuously poll raw telemetry or make first-order detecti
         │ execution RPC          │
         └────────────────────────┘
 
-        FUTURE OPTIONAL EXTENSION
+        RUNBOOK EXECUTION (Phase 4+)
                              │
                              ▼
-                 ┌──────────────────────┐
-                 │ Runbook Executor     │
-                 │ guarded remediation  │
-                 │ docker restart       │
-                 │ safe-mode actions    │
-                 └──────────────────────┘
+                 ┌───────────────────────┐
+                 │ Runbook Executor      │
+                 │ guarded remediation   │
+                 │ docker restart        │
+                 │ safe-mode actions     │
+                 │ approval state machine│
+                 └───────────────────────┘
 ```
 
 ---
@@ -87,23 +89,31 @@ Avoid having the LLM continuously poll raw telemetry or make first-order detecti
 
 ### Architecture
 
+The webhook receiver runs as a **separate lightweight process** from the main Hermes agent. This ensures alerts are always accepted even if the LLM inference pipeline is down, blocked, or rate-limited.
+
 ```
 Alertmanager
     │
     │  POST /webhook  (raw Alertmanager payload)
     ▼
 ┌─────────────────────────────┐
-│   Hermes Webhook Receiver   │  ← thin HTTP server, no LLM here
-│   - validate schema         │
+│   Webhook Receiver          │  ← standalone lightweight HTTP process
+│   (Python http.server /     │     Runs outside the LLM loop
+│    aiohttp, < 50MB RAM)     │     Bind-mounted as a Unix socket
+│   - validate schema         │     or separate port (default 8090)
 │   - deduplicate by fingerprint
 │   - normalize to HermesAlert
 │   - write to alert queue    │
 └────────────┬────────────────┘
              │
              ▼
-    ┌─────────────────┐
-    │   Alert Queue   │  ← SQLite WAL, survives Hermes restarts
-    └────────┬────────┘
+    ┌─────────────────────────────┐
+    │   Alert Queue               │  ← SQLite WAL + flat-file fallback buffer
+    │   - Primary: SQLite (WAL)   │     If SQLite is locked/unavailable,
+    │   - Fallback: append to     │     append JSON lines to /var/hermes/
+    │     /var/hermes/alerts.jsonl│     alerts.jsonl. A background reconciler
+    │                             │     drains the file into SQLite on recovery.
+    └────────┬────────────────────┘
              │
              ▼
     ┌─────────────────────────────┐
@@ -115,6 +125,67 @@ Alertmanager
     │   - notify operator         │
     │   - write outcome to memory │
     └─────────────────────────────┘
+```
+
+### Context Snapshot Fetch Behavior
+
+Context is pre-fetched at receive time. If a context source is unavailable (e.g. Lighthouse API is down because it crashed), the receiver substitutes **last-known values from Prometheus** for that metric. If Prometheus is also unreachable for that metric, the field is set to `"unavailable"` and flagged in the alert so Hermes knows context is stale.
+
+```json
+{
+  "context_snapshot": {
+    "head_slot_distance": 184,
+    "peer_count": 2,
+    "container_status": "unreachable",
+    "container_status_note": "docker socket returned connection refused, using last Prometheus value: running",
+    "validator_count": 3
+  }
+}
+```
+
+### Deduplication Logic
+
+```python
+SEVERITY_ORDER = {"critical": 1, "high": 2, "medium": 3, "low": 4}
+
+COOLDOWN = {
+    "critical": timedelta(minutes=15),
+    "high":     timedelta(hours=1),
+    "medium":   timedelta(hours=4),
+}
+
+def should_process(alert, db):
+    last = db.get_last_processed(alert.alert_type, alert.host)
+    if not last: return True
+    if last.status == "resolved" and alert.status == "firing": return True
+    if SEVERITY_ORDER.get(alert.severity, 99) < SEVERITY_ORDER.get(last.severity, 99): return True
+    if (alert.fired_at - last.processed_at) > COOLDOWN[alert.severity]: return True
+    return False
+```
+
+### Alert Storm Protection
+
+**Single-host:** If > 3 alerts arrive for the same host within 30 seconds, bundle them as a single "multi-system failure" incident and process once with combined context.
+
+**Cross-host correlation:** If the same alert type fires across >= 2 hosts within a 60-second window, treat it as a potential upstream/network issue. The receiver aggregates these into a single "cluster-wide" incident with per-host context snapshots. This prevents alert fatigue during network partitions, ISP outages, or consensus-layer disruptions affecting multiple validators simultaneously.
+
+### Self-Monitoring (Watchdog)
+
+```yaml
+# Hermes emits a heartbeat metric every 60s
+# Prometheus alert:
+- alert: HermesAgentSilent
+  expr: absent(hermes_alive) or hermes_alive == 0
+  for: 2m
+  annotations:
+    summary: "Hermes agent not responding — alerts may be missed"
+
+# Webhook receiver health (separate from Hermes process):
+- alert: WebhookReceiverDown
+  expr: absent(webhook_receiver_up) or webhook_receiver_up == 0
+  for: 30s
+  annotations:
+    summary: "Alertmanager webhook receiver is down — alerts will be queued but not processed"
 ```
 
 ### Normalized HermesAlert Schema
@@ -142,40 +213,6 @@ Alertmanager
 
 **Key principle:** pre-fetch the cheap context snapshot *at receive time*, not when the LLM processes it.
 
-### Deduplication Logic
-
-```python
-COOLDOWN = {
-    "critical": timedelta(minutes=15),
-    "high":     timedelta(hours=1),
-    "medium":   timedelta(hours=4),
-}
-
-def should_process(alert, db):
-    last = db.get_last_processed(alert.alert_type, alert.host)
-    if not last: return True
-    if last.status == "resolved" and alert.status == "firing": return True
-    if alert.severity > last.severity: return True
-    if (alert.fired_at - last.processed_at) > COOLDOWN[alert.severity]: return True
-    return False
-```
-
-### Alert Storm Protection
-
-If > 3 alerts arrive for the same host within 30 seconds, bundle them as a single "multi-system failure" incident and process once with combined context.
-
-### Self-Monitoring (Watchdog)
-
-```yaml
-# Hermes emits a heartbeat metric every 60s
-# Prometheus alert:
-- alert: HermesAgentSilent
-  expr: absent(hermes_alive) or hermes_alive == 0
-  for: 2m
-  annotations:
-    summary: "Hermes agent not responding — alerts may be missed"
-```
-
 ---
 
 ## 4. Slashing Risk — Detailed Treatment
@@ -190,7 +227,6 @@ If > 3 alerts arrive for the same host within 30 seconds, bundle them as a singl
 | Clock skew > 500ms | NTP / system | seconds |
 | Double vote seen on beacon chain | Beacon REST API | ~12s slot |
 | External slasher alert | Prometheus exporter | variable |
-| JWT auth failure on EL | EL logs | seconds |
 
 ### Detection Rules
 
@@ -201,7 +237,10 @@ If > 3 alerts arrive for the same host within 30 seconds, bundle them as a singl
   severity: critical
 
 - alert: SlashingProtectionDBError
-  expr: sum(count_over_time({container="validator"} |= "slashing protection" |= "error" [1m])) > 0
+  # Loki ruler rule: count lines matching "slashing protection" AND "error"
+  # in the validator stream over a 1m window
+  expr: sum(count_over_time({container="validator"} |~ "slashing protection" |~ "error" [1m])) > 0
+  for: 30s
   severity: critical
 
 - alert: ClockSkewExcessive
@@ -212,23 +251,24 @@ If > 3 alerts arrive for the same host within 30 seconds, bundle them as a singl
 
 ### Hermes Response Protocol
 
-**Phase 1 — IMMEDIATE (< 5 seconds)**
+**Step 1 — IMMEDIATE (< 5 seconds)**
 1. Suspend normal queue processing — slashing is priority 0
 2. Page operator via ALL configured channels simultaneously
 3. Do NOT attempt any remediation
 4. Snapshot: `docker ps`, last 500 lines of VC logs, slashing protection DB copy, beacon validator status, system clock offset
 
-**Phase 2 — FORENSIC CONTEXT (< 30 seconds)**
+**Step 2 — FORENSIC CONTEXT (< 30 seconds)**
 5. Query beacon API for recent attestation history for all managed pubkeys
 6. Check for proposals in the last 2 epochs
 7. Identify if a second VC process is running (docker ps + /proc scan)
 8. Confirm slashing protection DB integrity
 
-**Phase 3 — OPERATOR SUMMARY**
+**Step 3 — OPERATOR SUMMARY**
 9. Send structured notification with findings, recommended action (if any), and explicit warning not to restart without confirming which DB is correct
 
-**Phase 4 — EVIDENCE PRESERVATION**
+**Step 4 — EVIDENCE PRESERVATION**
 10. Write full incident bundle to disk regardless of operator response:
+
 ```
 /var/hermes/incidents/slash_{timestamp}/
 ├── docker_ps.txt
@@ -262,17 +302,17 @@ triggers:
 
 diagnostics:                          # TIER 1: always run, no approval, no notification
   - id: fetch_sync_status
-    cmd: "curl -s http://lighthouse:5052/eth/v1/node/syncing"
+    cmd: "curl -s http://consensus:5052/eth/v1/node/syncing"
     timeout: 5s
   - id: fetch_peer_count
-    cmd: "curl -s http://lighthouse:5052/eth/v1/node/peer_count"
+    cmd: "curl -s http://consensus:5052/eth/v1/node/peer_count"
   - id: tail_logs
-    cmd: "docker logs lighthouse --tail 100 --since 10m"
+    cmd: "docker logs consensus --tail 100 --since 10m"
 
 suggested_actions:                    # TIER 2: Hermes proposes, operator approves each
   - id: restart_consensus_client
     description: "Restart the Lighthouse consensus client container"
-    cmd: "docker restart lighthouse"
+    cmd: "docker restart consensus"
     risk: low
     reversible: true
     requires_approval: true
@@ -397,6 +437,7 @@ Be specific. If this matches a pattern from history, say so explicitly.
 ### Post-Incident Feedback Collection
 
 After every incident closes, Hermes sends a follow-up:
+
 - Was the diagnosis correct? (Yes / No + correction text)
 - Was the action helpful? (Fixed it / Didn't help / Fixed it myself)
 
@@ -404,7 +445,7 @@ Corrections are stored and injected into future prompts for the same host/alert 
 
 ### Host Baseline Learning
 
-Run nightly: pull last 7 days of key metrics from Prometheus per host, compute p50/p95, store in `host_fingerprints`. Use host-specific baselines rather than global thresholds when evaluating alerts.
+Run as a nightly scheduled task (Hermes cron job or systemd timer): pull last 7 days of key metrics from Prometheus per host via the Prometheus HTTP API (`/api/v1/query_range`), compute p50/p95, store in `host_fingerprints`. Use host-specific baselines rather than global thresholds when evaluating alerts. The job runs at low priority and does not block alert processing if it fails.
 
 ---
 
@@ -417,30 +458,108 @@ Run nightly: pull last 7 days of key metrics from Prometheus per host, compute p
 | Slashing Risk | duplicate VC, DB error, clock skew | full forensic protocol (see §4) |
 | Client Crash | `docker_container_up == 0` | exit code, last logs, crash pattern matching |
 
+### Telemetry plane health (critical infrastructure)
+
+These alerts monitor the monitoring system itself. If Prometheus or Loki are down, all downstream detection is blind.
+
+| Alert | Signal | Response |
+|---|---|---|
+| Prometheus Down | `up{job="prometheus"} == 0` | Page immediately — all detection is offline |
+| Prometheus Target Down | `up == 0` for any eth-docker target | Alertmanager fires; Hermes enriches with target-specific context |
+| Loki Down | `up{job="loki"} == 0` | Log-based detection offline; metric-based detection still works |
+| Alertmanager Queue Backlog | `alertmanager_notifications_failed_total` rising | Alerts may be delayed; check webhook receiver health |
+| Grafana Dashboard Down | `up{job="grafana"} == 0` | Visualization only — detection unaffected, but operator loses dashboard access |
+
 ---
 
 ## 8. Deployment Topology
 
+### eth-docker service naming convention
+
+When deployed alongside eth-docker, use the canonical service names that eth-docker defines. This ensures runbook commands target the correct containers.
+
+| Role | eth-docker default service name | Example |
+|---|---|---|
+| Execution client | `execution` | `execution` (geth), `execution` (nethermind) |
+| Consensus client | `consensus` | `consensus` (lighthouse), `consensus` (teku) |
+| Validator client | `validator` | `validator` (lighthouse), `validator` (teku) |
+| Prometheus | `prometheus` | `prometheus` |
+| Grafana | `grafana` | `grafana` |
+
+Runbook commands reference these names directly (e.g. `docker logs execution`, `docker restart consensus`).
+
+### Docker socket access
+
+The default configuration mounts `/var/run/docker.sock:ro` into the Hermes container. **This is a significant attack surface** — even read-only access exposes container metadata, labels, environment variables, and potentially secrets via `docker inspect`.
+
+**Recommended: socket-proxy pattern**
+
+Run a minimal proxy container that only exposes the specific Docker API endpoints Hermes needs:
+
 ```yaml
-# docker-compose (single host)
+# docker-compose socket-proxy
 services:
-  execution:    # geth / nethermind
-  consensus:    # lighthouse / teku / prysm
-  validator:    # VC
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      CONTAINERS: 1       # Allow /containers/* endpoints
+      IMAGES: 0           # Block /images/*
+      NETWORKS: 0         # Block /networks/*
+      SECRETS: 0          # Block /secrets/*
+      POST: 0             # Block all POST requests (read-only)
+    networks:
+      - hermes-monitoring
+
+  hermes-agent:
+    environment:
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+```
+
+This reduces the attack surface to only container enumeration and inspection — no image management, network manipulation, or secret access.
+
+### Compose configuration
+
+```yaml
+# docker-compose (single host, eth-docker conventions)
+services:
+  execution:       # geth / nethermind (managed by eth-docker)
+  consensus:       # lighthouse / teku / prysm
+  validator:       # VC
   prometheus:
   grafana:
   loki:
   alertmanager:
   hermes-agent:
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./runbooks:/runbooks:ro
-      - hermes-data:/var/hermes
     environment:
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375  # or direct socket mount
       - PROMETHEUS_URL=http://prometheus:9090
       - LOKI_URL=http://loki:3100
       - BEACON_URL=http://consensus:5052
       - NOTIFICATION_WEBHOOK=...
+    volumes:
+      - ./runbooks:/runbooks:ro
+      - hermes-data:/var/hermes
+    networks:
+      - hermes-monitoring
+    depends_on:
+      - docker-socket-proxy  # if using socket-proxy
+  webhook-receiver:          # separate lightweight process
+    build: ./webhook-receiver  # or image: your-registry/webhook-receiver:latest
+    ports:
+      - "8090:8090"
+    volumes:
+      - hermes-data:/var/hermes
+    environment:
+      - ALERT_QUEUE_PATH=/var/hermes/alerts.db
+      - PROMETHEUS_URL=http://prometheus:9090
+    networks:
+      - hermes-monitoring
+    depends_on:
+      - prometheus           # needs Prometheus for context snapshot fallback
+      - docker-socket-proxy  # needs Docker API for container status
+    restart: unless-stopped
 ```
 
 ---
@@ -464,14 +583,16 @@ services:
 
 ## 10. Phased Roadmap
 
-| Phase | Scope |
-|---|---|
-| 1 | Webhook receiver + alert normalization + queue |
-| 2 | Hermes integration + runbook matching + operator notifications |
-| 3 | Memory layer + feedback loop + host fingerprints |
-| 4 | Tier 2 suggested actions + approval state machine |
-| 5 | Runbook synthesis from historical incidents |
-| 6 | Semi-autonomous remediation with confidence scoring |
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | Webhook receiver + alert normalization + queue | Design complete |
+| 2 | Hermes integration + runbook matching + operator notifications | Design complete |
+| 3 | Memory layer + feedback loop + host fingerprints | Design complete |
+| 4 | Tier 2 suggested actions + approval state machine | Design complete (§5) |
+| 5 | Runbook synthesis from historical incidents | Design complete |
+| 6 | Semi-autonomous remediation with confidence scoring | Future |
+
+Phases 1-3 are read-only: Hermes receives, analyzes, and notifies. No autonomous actions. Phases 4-5 add the approval-gated runbook execution defined in §5. Phase 6 is exploratory and requires sufficient incident history to train confidence thresholds.
 
 ---
 
@@ -484,3 +605,6 @@ services:
 - All approvals have explicit timeouts — silence means no action
 - Every incident, outcome, and correction is persisted
 - The system is safe and useful on day 1 with no autonomous action enabled
+- Docker socket access uses the **socket-proxy pattern** — Hermes receives only container enumeration/inspection, never image management, network manipulation, or secret access
+- The webhook receiver runs as a **separate process** from the main Hermes agent — alerts are accepted even if the LLM pipeline is down
+- Telemetry plane health (Prometheus, Loki, Alertmanager) is monitored at the same level as validator alerts — blind detection is worse than no detection
