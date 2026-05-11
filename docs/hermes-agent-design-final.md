@@ -200,9 +200,9 @@ The offset is updated **after** a line is successfully written to SQLite, not af
 
 If hermes-agent is down, the receiver continues appending. On restart, the agent resumes from `last_read_offset` and processes the backlog before accepting new alerts.
 
-The jsonl file grows until compacted — hermes-agent archives processed lines to `alerts.jsonl.YYYY-MM-DD` on a daily schedule and resets the offset to 0.
+**Queue rotation safety:** Archive `alerts.jsonl` to `alerts.jsonl.YYYY-MM-DD` and reset the offset to 0 **only when `last_read_offset` equals EOF** (file fully drained). If unprocessed lines exist at the end of the file at rotation time, preserve the tail in the new file and update the offset accordingly. Never discard unprocessed lines.
 
-**Deduplication note:** The webhook receiver needs read-only access to the SQLite `incidents` table for `db.get_last_processed()` lookups (deduplication runs at receive time, before writing to jsonl). Mount the SQLite file as read-only in the receiver container, or open it with `?mode=ro`. The receiver never writes to it — all inserts go through hermes-agent. SQLite WAL mode handles concurrent readers safely.
+**Deduplication note:** The webhook receiver needs read-only access to the SQLite `incidents` table for `db.get_last_processed()` lookups (deduplication runs at receive time, before writing to jsonl). Mount the SQLite file as read-only in the receiver container, or open it with `?mode=ro`. The receiver never writes to it — all inserts go through hermes-agent. Initialize the database with `PRAGMA journal_mode=WAL;` to ensure the read-only receiver and writer agent can access the database concurrently without `SQLITE_BUSY` locks.
 
 ### Context Snapshot Fetch Behavior
 
@@ -742,6 +742,8 @@ The recommended path is Option A — the nginx `map` approach is safe under conc
 # docker-compose.yml
 # Defines the monitoring augmentation layer.
 # eth-docker manages its own stack separately — see network integration note below.
+# Sensitive variables must be loaded via a .env file — do not inline secrets in
+# docker-compose.yml to prevent exposure in `docker inspect` output.
 services:
 
   docker-socket-proxy:
