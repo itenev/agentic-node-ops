@@ -1,6 +1,6 @@
 # Runbooks for Ethereum node monitoring
 
-# See docs/hermes-agent-design.md §5 for the runbook schema
+# See [docs/runbook-spec.md](../docs/runbook-spec.md) for the runbook schema
 
 # Example runbook (to be implemented)
 

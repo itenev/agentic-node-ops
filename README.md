@@ -90,7 +90,7 @@ twine upload dist/*
 
 See implementation phases in [docs/hermes-implementation-plan.md](docs/hermes-implementation-plan.md).
 
-1. Review [docs/](docs/) for architecture and design documents
+1. Review [docs/architecture.md](docs/architecture.md) for system design and [docs/](docs/) for all design documents
 2. Deploy monitoring stack alongside eth-docker (Prometheus, Loki, Alertmanager)
 3. Configure Alertmanager to POST to `http://webhook-receiver:8090/webhook`
 4. Deploy webhook receiver (Phase 1) + hermes-agent integration (Phase 2)
