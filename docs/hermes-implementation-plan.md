@@ -34,24 +34,7 @@
 
 ### Task 4: Split design doc into focused documents
 
-**Objective:** Split the 945-line `docs/hermes-agent-design-final.md` into focused, maintainable documents.
-
-**Files:**
-- Create: `docs/architecture.md` (system diagram, planes, tech choices, deployment)
-- Create: `docs/slashing-protocol.md` (slashing detection, response, evidence preservation)
-- Create: `docs/runbook-spec.md` (runbook schema, approval model, fatigue prevention)
-- Create: `docs/memory-and-feedback.md` (DB schema, feedback loop, host baselines)
-- Create: `docs/alert-set.md` (initial alerts, telemetry health)
-- Create: `docs/notification-design.md` (two-tier routing, Discord, ntfy, env vars)
-- Create: `docs/webhook-receiver-spec.md` (queue design, dedup, context snapshot, storm protection)
-- Modify: `docs/hermes-agent-design-final.md` → replace with index/overview linking to sub-docs
-
-**Steps:**
-1. Create each sub-document by extracting relevant sections from the design doc
-2. Update the design doc to be a table-of-contents/index linking to the new docs
-3. Update `README.md` references to point to the correct doc paths
-4. Update `runbooks/README.md` reference to the new runbook spec path
-5. Commit all changes
+[x] Complete — Split 945-line `hermes-agent-design-final.md` into index (80 lines) + 6 focused documents: `architecture.md`, `webhook-receiver-spec.md`, `slashing-protocol.md`, `runbook-spec.md`, `memory-and-feedback.md`, `alert-set.md`, `notification-design.md`. Updated all cross-references in README and runbooks README.
 
 ---
 
