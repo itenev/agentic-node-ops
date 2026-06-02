@@ -49,12 +49,51 @@ agentic-node-ops/
 
 ## Quick Start
 
-*Implementation has not started — design is finalized and implementation-ready.*
+### Prerequisites
 
-1. Review [docs/hermes-agent-design-final.md](docs/hermes-agent-design-final.md)
+- Python 3.12+
+- Docker + Docker Compose (for deployment)
+- eth-docker running on the target host
+
+### Development Setup
+
+```bash
+# Create virtual environment and install dependencies
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+
+# Run tests
+.venv/bin/pytest tests/ -v
+
+# Run a single test module
+.venv/bin/pytest tests/test_notifications.py -v
+```
+
+### Building
+
+```bash
+# Build a wheel distribution
+python3 -m pip install build
+python3 -m build
+# Output: dist/agentic_node_ops-0.1.0-py3-none-any.whl
+```
+
+### Releasing
+
+```bash
+# Bump version in pyproject.toml, then:
+python3 -m build
+twine upload dist/*
+```
+
+### Deployment
+
+See implementation phases in [docs/hermes-implementation-plan.md](docs/hermes-implementation-plan.md).
+
+1. Review [docs/](docs/) for architecture and design documents
 2. Deploy monitoring stack alongside eth-docker (Prometheus, Loki, Alertmanager)
 3. Configure Alertmanager to POST to `http://webhook-receiver:8090/webhook`
-4. Implement webhook receiver (Phase 1) + hermes-agent integration (Phase 2)
+4. Deploy webhook receiver (Phase 1) + hermes-agent integration (Phase 2)
 5. Import initial runbooks into `runbooks/`
 
 ## Design Constraints
