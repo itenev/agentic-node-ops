@@ -1,17 +1,16 @@
 """
-hermes/notifications/tests/test_notifications.py
+tests/test_notifications.py
 
 Unit tests — no real HTTP calls, all transports are mocked.
 
 Run:
-    pytest hermes/notifications/tests/ -v
+    pytest tests/ -v
 """
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from hermes.notifications.types import (
+from agentic_node_ops.types import (
     NotificationPayload,
     NotificationResult,
     Severity,
@@ -19,9 +18,9 @@ from hermes.notifications.types import (
     NTFY_PRIORITY,
     DISCORD_COLOR,
 )
-from hermes.notifications.discord import DiscordNotifier, _truncate
-from hermes.notifications.ntfy    import NtfyNotifier, _build_title, _build_message, _build_tags
-from hermes.notifications.dispatcher import NotificationDispatcher
+from agentic_node_ops.discord import DiscordNotifier, _truncate
+from agentic_node_ops.ntfy    import NtfyNotifier, _build_title, _build_message, _build_tags
+from agentic_node_ops.dispatcher import NotificationDispatcher
 
 
 # ------------------------------------------------------------------ #
@@ -198,41 +197,41 @@ class TestDispatcher:
         d._ntfy.send    = AsyncMock(return_value=ntfy_result    or NotificationResult("ntfy",    True))
         return d
 
-    def test_high_severity_discord_only(self):
+    async def test_high_severity_discord_only(self):
         dispatcher = self._make_dispatcher()
         p = make_payload(severity=Severity.HIGH)
-        asyncio.get_event_loop().run_until_complete(dispatcher.dispatch(p))
+        await dispatcher.dispatch(p)
         dispatcher._discord.send.assert_called_once()
         dispatcher._ntfy.send.assert_not_called()
 
-    def test_critical_severity_both_channels(self):
+    async def test_critical_severity_both_channels(self):
         dispatcher = self._make_dispatcher()
         p = make_payload(severity=Severity.CRITICAL)
-        asyncio.get_event_loop().run_until_complete(dispatcher.dispatch(p))
+        await dispatcher.dispatch(p)
         dispatcher._discord.send.assert_called_once()
         dispatcher._ntfy.send.assert_called_once()
 
-    def test_slashing_always_fires_ntfy(self):
+    async def test_slashing_always_fires_ntfy(self):
         dispatcher = self._make_dispatcher()
         # High severity normally skips ntfy
         p = make_payload(severity=Severity.HIGH, is_slashing=True)
-        asyncio.get_event_loop().run_until_complete(dispatcher.dispatch(p))
+        await dispatcher.dispatch(p)
         dispatcher._ntfy.send.assert_called_once()
 
-    def test_dispatch_returns_results_list(self):
+    async def test_dispatch_returns_results_list(self):
         dispatcher = self._make_dispatcher()
         p = make_payload(severity=Severity.CRITICAL)
-        results = asyncio.get_event_loop().run_until_complete(dispatcher.dispatch(p))
+        results = await dispatcher.dispatch(p)
         assert isinstance(results, list)
         assert all(isinstance(r, NotificationResult) for r in results)
 
-    def test_dispatch_never_raises_on_discord_failure(self):
+    async def test_dispatch_never_raises_on_discord_failure(self):
         dispatcher = self._make_dispatcher(
             discord_result=NotificationResult("discord", False, error="timeout")
         )
         p = make_payload(severity=Severity.HIGH)
         # Should not raise
-        results = asyncio.get_event_loop().run_until_complete(dispatcher.dispatch(p))
+        results = await dispatcher.dispatch(p)
         assert results[0].success is False
         assert results[0].error == "timeout"
 
