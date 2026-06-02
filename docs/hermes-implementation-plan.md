@@ -20,53 +20,15 @@
 
 ### Task 1: Add pyproject.toml and project structure
 
-**Objective:** Create proper Python project scaffolding so the package is installable and testable.
-
-**Files:**
-- Create: `pyproject.toml`
-- Create: `src/agentic_node_ops/__init__.py` (already exists, verify)
-
-**Steps:**
-1. Write `pyproject.toml` with:
-   - Package name: `agentic-node-ops`
-   - Version: `0.1.0`
-   - Python requires: `>=3.12`
-   - Dependencies: `httpx`, `pyyaml`
-   - Dev dependencies: `pytest`, `pytest-asyncio`
-   - Test command config
-2. Verify package is importable: `cd /home/itenev/code/itenev/agentic-node-ops && python3 -c "import agentic_node_ops; print(agentic_node_ops.__version__)"`
-
----
+[x] Complete — Created `pyproject.toml` (setuptools, httpx, pyyaml, pytest, pytest-asyncio). Installed in `.venv/`. Package importable.
 
 ### Task 2: Fix test import paths
 
-**Objective:** Tests import from `hermes.notifications.*` but the package is `agentic_node_ops`. Fix all imports.
-
-**Files:**
-- Modify: `tests/test_notifications.py`
-
-**Steps:**
-1. Replace all `from hermes.notifications.` with `from agentic_node_ops.`
-2. Run tests: `cd /home/itenev/code/itenev/agentic-node-ops && python3 -m pytest tests/test_notifications.py -v`
-3. Verify all tests pass
-
----
+[x] Complete — Replaced `hermes.notifications.*` with `agentic_node_ops.*`. All 30 tests pass.
 
 ### Task 3: Migrate tests to pytest-asyncio
 
-**Objective:** Replace deprecated `asyncio.get_event_loop().run_until_complete()` with `pytest-asyncio`.
-
-**Files:**
-- Modify: `tests/test_notifications.py`
-- Modify: `pyproject.toml` (ensure pytest-asyncio is a dev dependency)
-
-**Steps:**
-1. Add `pytest-asyncio` to dev dependencies
-2. Add `asyncio_mode = "auto"` to pytest config
-3. Replace `asyncio.get_event_loop().run_until_complete(dispatcher.dispatch(p))` with `await dispatcher.dispatch(p)` in test methods
-4. Mark async test methods with `@pytest.mark.asyncio` (or rely on auto mode)
-5. Run tests: `python3 -m pytest tests/test_notifications.py -v`
-6. Verify all tests pass
+[x] Complete — Replaced deprecated `asyncio.get_event_loop().run_until_complete()` with `async def` + `await`. `asyncio_mode = "auto"` in pyproject.toml. Added `pythonpath = ["src"]` for src layout discovery. All 30 tests pass clean.
 
 ---
 
