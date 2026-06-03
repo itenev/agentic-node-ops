@@ -42,46 +42,30 @@
 
 ### Task 5: Implement webhook receiver — HTTP endpoint + schema validation
 
-**Objective:** Build the standalone HTTP receiver that accepts Alertmanager POSTs, validates schema, normalizes to HermesAlert, and appends to jsonl.
-
-**Files:**
-- Create: `webhook-receiver/src/__init__.py`
-- Create: `webhook-receiver/src/server.py` (aiohttp/http.server HTTP endpoint)
-- Create: `webhook-receiver/src/schema.py` (Alertmanager payload validation)
-- Create: `webhook-receiver/src/types.py` (HermesAlert dataclass)
-- Create: `webhook-receiver/src/queue_writer.py` (jsonl append with O_APPEND)
-- Create: `webhook-receiver/tests/test_server.py`
-- Create: `webhook-receiver/tests/test_schema.py`
-- Create: `webhook-receiver/tests/test_queue.py`
-- Create: `webhook-receiver/pyproject.toml`
-- Create: `webhook-receiver/Dockerfile`
-
-**Steps:**
-1. Create webhook-receiver package structure
-2. Implement HermesAlert schema (matching design doc §3)
-3. Implement Alertmanager payload parser + validator
-4. Implement jsonl queue writer (atomic append)
-5. Implement HTTP server on port 8090, POST /webhook
-6. Write tests (TDD)
-7. Create Dockerfile
-8. Verify: `curl -X POST http://localhost:8090/webhook -d '{"alerts":[...]}'`
+[x] Complete — Created `webhook-receiver/` standalone package (aiohttp-based):
+  - `types.py`: HermesAlert dataclass, Severity/AlertStatus enums, JSONL serialization
+  - `schema.py`: Alertmanager payload validation + normalization (12 tests)
+  - `server.py`: POST /webhook + GET /health endpoints, QueueWriter (9 tests)
+  - `dedup.py`: Read-only SQLite dedup logic (13 tests)
+  - `pyproject.toml`: aiohttp + pytest-asyncio deps
+  - 39 tests total, all passing
 
 ---
 
 ### Task 6: Implement deduplication logic
 
-**Objective:** Add dedup gate at receive time — read-only SQLite lookup to check cooldowns.
-
-**Files:**
-- Modify: `webhook-receiver/src/server.py`
-- Create: `webhook-receiver/src/dedup.py`
-
-**Steps:**
-1. Implement `should_process()` logic from design doc §3
-2. Open SQLite in read-only mode for dedup lookups
-3. Integrate into receive pipeline
-4. Write tests
-5. Verify dedup prevents duplicate alerts within cooldown windows
+[x] Complete — Created `webhook-receiver/src/webhook_receiver/dedup.py`:
+  - `DedupLookup` class: read-only SQLite accessor for incident lookups
+  - `should_process(alert, lookup)` → bool with 5 rules:
+    1. No prior incident → always process
+    2. Resolved → firing → always process
+    3. Higher severity breaks dedup
+    4. Cooldown elapsed → process (critical=15m, high=1h, medium=4h)
+    5. Otherwise → deduplicate (skip)
+  - Fails open: if DB is unavailable, alerts always process
+  - Handles timezone-naive and timezone-aware datetimes
+  - Integrated into `WebhookHandler` — deduped alerts tracked in health endpoint
+  - 18 tests (13 dedup unit + 5 integration tests)
 
 ---
 

@@ -1,14 +1,15 @@
 """Tests for the webhook receiver HTTP server."""
 
 import json
-import os
-import tempfile
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from aiohttp import web
 
 from webhook_receiver.server import create_app, WebhookHandler, QueueWriter
+from webhook_receiver.dedup import DedupLookup
 from webhook_receiver.types import Severity, AlertStatus
 
 
@@ -19,22 +20,56 @@ def tmp_jsonl(tmp_path):
 
 
 @pytest.fixture
-def app(tmp_jsonl):
-    """Create app with a temporary JSONL path."""
-    old = os.environ.get("ALERTS_JSONL_PATH")
-    os.environ["ALERTS_JSONL_PATH"] = tmp_jsonl
-    try:
-        yield create_app()
-    finally:
-        if old is None:
-            os.environ.pop("ALERTS_JSONL_PATH", None)
-        else:
-            os.environ["ALERTS_JSONL_PATH"] = old
+def tmp_db(tmp_path):
+    """Provide a temporary SQLite DB with incidents table."""
+    db_path = tmp_path / "incidents.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE incidents (
+            id TEXT PRIMARY KEY,
+            alert_type TEXT NOT NULL,
+            host TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            fired_at DATETIME,
+            resolved_at DATETIME
+        )
+    """)
+    conn.commit()
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture
+def app(tmp_jsonl, tmp_db):
+    """Create app with temporary paths."""
+    return create_app(db_path=tmp_db, jsonl_path=tmp_jsonl)
 
 
 @pytest.fixture
 async def client(aiohttp_client, app):
     return await aiohttp_client(app)
+
+
+def _valid_payload(alertname="consensus_desync", severity="high", host="validator-01") -> dict:
+    """Build a valid Alertmanager webhook payload for testing."""
+    return {
+        "version": "4",
+        "status": "firing",
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {
+                    "alertname": alertname,
+                    "severity": severity,
+                    "host": host,
+                },
+                "annotations": {},
+                "startsAt": "2025-01-01T00:00:00Z",
+            }
+        ],
+        "commonLabels": {},
+        "externalURL": "http://alertmanager:9093",
+    }
 
 
 class TestHealthEndpoint:
@@ -44,10 +79,10 @@ class TestHealthEndpoint:
         data = await resp.json()
         assert data["status"] == "healthy"
         assert "alerts_received" in data
+        assert "alerts_deduped" in data
         assert "alerts_errors" in data
 
     async def test_health_tracks_errors(self, client):
-        # Send invalid JSON to trigger an error
         await client.post(
             "/webhook",
             data="not json",
@@ -59,30 +94,8 @@ class TestHealthEndpoint:
 
 
 class TestWebhookEndpoint:
-    def _valid_payload(self, alertname="consensus_desync", severity="high") -> dict:
-        return {
-            "version": "4",
-            "status": "firing",
-            "alerts": [
-                {
-                    "status": "firing",
-                    "labels": {
-                        "alertname": alertname,
-                        "severity": severity,
-                        "host": "validator-01",
-                    },
-                    "annotations": {},
-                    "startsAt": "2025-01-01T00:00:00Z",
-                }
-            ],
-            "commonLabels": {},
-            "externalURL": "http://alertmanager:9093",
-        }
-
     async def test_valid_webhook_returns_200(self, client):
-        resp = await client.post(
-            "/webhook", json=self._valid_payload()
-        )
+        resp = await client.post("/webhook", json=_valid_payload())
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "ok"
@@ -90,7 +103,7 @@ class TestWebhookEndpoint:
         assert "offsets" in data
 
     async def test_multiple_alerts_processed(self, client):
-        payload = self._valid_payload()
+        payload = _valid_payload()
         payload["alerts"].append(
             {
                 "status": "firing",
@@ -124,7 +137,7 @@ class TestWebhookEndpoint:
         assert resp.status == 400
 
     async def test_missing_alertname_returns_400(self, client):
-        payload = self._valid_payload()
+        payload = _valid_payload()
         payload["alerts"][0]["labels"].pop("alertname")
         resp = await client.post("/webhook", json=payload)
         assert resp.status == 400
@@ -135,7 +148,7 @@ class TestWebhookEndpoint:
 
     async def test_alerts_written_to_jsonl(self, client, tmp_jsonl):
         """Verify that accepted alerts are actually written to the JSONL file."""
-        resp = await client.post("/webhook", json=self._valid_payload())
+        resp = await client.post("/webhook", json=_valid_payload())
         assert resp.status == 200
 
         path = Path(tmp_jsonl)
@@ -146,3 +159,85 @@ class TestWebhookEndpoint:
         assert data["alert_type"] == "consensus_desync"
         assert data["severity"] == "high"
         assert data["host"] == "validator-01"
+
+
+def _seed_incident(db_path, alert_type, host, severity, fired_at, resolved_at=None):
+    """Insert a prior incident into the test DB."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (f"test-{alert_type}-{host}", alert_type, host, severity, fired_at, resolved_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+class TestDedupIntegration:
+    """Test dedup logic integrated into the webhook endpoint."""
+
+    async def test_dedup_suppresses_duplicate_within_cooldown(self, client, tmp_db, tmp_jsonl):
+        """Alert within cooldown window of a prior incident should be deduped."""
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        _seed_incident(
+            tmp_db, "consensus_desync", "validator-01", "high",
+            recent  # within 1-hour cooldown for high severity
+        )
+        resp = await client.post("/webhook", json=_valid_payload())
+        data = await resp.json()
+        assert data["alerts_deduped"] == 1
+        assert data["alerts_processed"] == 0
+
+    async def test_dedup_allows_higher_severity(self, client, tmp_db):
+        """A critical alert should pass through even if a high one was recently processed."""
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        _seed_incident(
+            tmp_db, "consensus_desync", "validator-01", "high",
+            recent
+        )
+        resp = await client.post(
+            "/webhook",
+            json=_valid_payload(severity="critical"),
+        )
+        data = await resp.json()
+        assert data["alerts_processed"] == 1
+        assert data["alerts_deduped"] == 0
+
+    async def test_dedup_allows_resolved_to_firing(self, client, tmp_db):
+        """A new firing alert after a resolved one should pass."""
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        resolved = (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat()
+        _seed_incident(
+            tmp_db, "consensus_desync", "validator-01", "high",
+            recent, resolved  # resolved
+        )
+        resp = await client.post("/webhook", json=_valid_payload())
+        data = await resp.json()
+        assert data["alerts_processed"] == 1
+        assert data["alerts_deduped"] == 0
+
+    async def test_dedup_allows_different_host(self, client, tmp_db):
+        """Same alert type on a different host should not be deduped."""
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        _seed_incident(
+            tmp_db, "consensus_desync", "validator-01", "high",
+            recent
+        )
+        resp = await client.post(
+            "/webhook",
+            json=_valid_payload(host="validator-02"),
+        )
+        data = await resp.json()
+        assert data["alerts_processed"] == 1
+        assert data["alerts_deduped"] == 0
+
+    async def test_health_tracks_dedup_count(self, client, tmp_db):
+        """Health endpoint should reflect deduped alert count."""
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        _seed_incident(
+            tmp_db, "consensus_desync", "validator-01", "high",
+            recent
+        )
+        await client.post("/webhook", json=_valid_payload())
+        resp = await client.get("/health")
+        data = await resp.json()
+        assert data["alerts_deduped"] == 1
