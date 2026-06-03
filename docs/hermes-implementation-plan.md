@@ -71,17 +71,16 @@
 
 ### Task 7: Implement alert storm protection
 
-**Objective:** Bundle alerts when >3 for same host in 30s, or same alert across >=2 hosts in 60s.
-
-**Files:**
-- Modify: `webhook-receiver/src/server.py`
-- Create: `webhook-receiver/src/storm_protection.py`
-
-**Steps:**
-1. Implement single-host bundling (>3 alerts/30s/host)
-2. Implement cross-host correlation (same alert type across >=2 hosts/60s)
-3. Write tests
-4. Verify bundling behavior
+[x] Complete — Created `webhook-receiver/src/webhook_receiver/storm_protection.py`:
+  - `StormTracker`: in-memory tracker for detecting alert storms
+  - `AlertBundle`: dataclass for bundled alerts with `to_alert()` conversion
+  - Single-host storm: >3 alerts per host within 30s → bundle as `storm_single_host`
+  - Cross-host storm: same alert type across >=2 hosts within 60s → bundle as `storm_cross_host`
+  - Bundled alerts written to JSONL with severity inheritance (critical if any is critical)
+  - Automatic counter reset after bundle creation
+  - Expired entry cleanup (30s for single-host, 60s for cross-host)
+  - Integrated into WebhookHandler — bundled alerts tracked in health endpoint
+  - 21 tests (15 unit + 4 integration + 2 AlertBundle tests)
 
 ---
 

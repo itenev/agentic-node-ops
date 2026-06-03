@@ -80,6 +80,7 @@ class TestHealthEndpoint:
         assert data["status"] == "healthy"
         assert "alerts_received" in data
         assert "alerts_deduped" in data
+        assert "alerts_bundled" in data
         assert "alerts_errors" in data
 
     async def test_health_tracks_errors(self, client):
@@ -241,3 +242,61 @@ class TestDedupIntegration:
         resp = await client.get("/health")
         data = await resp.json()
         assert data["alerts_deduped"] == 1
+
+
+class TestStormProtectionIntegration:
+    """Test storm protection integrated into the webhook endpoint."""
+
+    async def test_single_host_storm_bundles_alerts(self, client, tmp_jsonl):
+        """>3 alerts on same host within 30s should be bundled."""
+        payload = _valid_payload()
+        # Send 4 alerts on the same host
+        for _ in range(4):
+            resp = await client.post("/webhook", json=payload)
+
+        data = await resp.json()
+        assert data["alerts_bundled"] >= 1
+        # The last alert triggered a bundle, so it's 1 bundled alert
+        # written to JSONL (not 4 individual)
+        path = Path(tmp_jsonl)
+        lines = path.read_text().strip().split("\n")
+        # 3 individual + 1 bundle = 4 lines (or could be 3 + 1 bundle = 4)
+        # Actually: first 3 go through, 4th triggers bundle → 4 lines total
+        assert len(lines) == 4
+        # Last line should be the storm bundle
+        bundle = json.loads(lines[-1])
+        assert bundle["alert_type"] == "storm_single_host"
+
+    async def test_cross_host_storm_bundles_alerts(self, client, tmp_jsonl):
+        """Same alert type on >=2 hosts within 60s should be bundled."""
+        resp1 = await client.post("/webhook", json=_valid_payload(host="validator-01"))
+        resp2 = await client.post("/webhook", json=_valid_payload(host="validator-02"))
+
+        data2 = await resp2.json()
+        assert data2["alerts_bundled"] >= 1
+
+        path = Path(tmp_jsonl)
+        lines = path.read_text().strip().split("\n")
+        # First alert goes through, second triggers bundle
+        assert len(lines) == 2
+        bundle = json.loads(lines[-1])
+        assert bundle["alert_type"] == "storm_cross_host"
+
+    async def test_health_tracks_bundle_count(self, client):
+        """Health endpoint should reflect bundled alert count."""
+        # Trigger a cross-host storm
+        await client.post("/webhook", json=_valid_payload(host="validator-01"))
+        await client.post("/webhook", json=_valid_payload(host="validator-02"))
+
+        resp = await client.get("/health")
+        data = await resp.json()
+        assert data["alerts_bundled"] >= 1
+
+    async def test_response_includes_bundled_ids(self, client):
+        """Response should include IDs of alerts that were bundled."""
+        await client.post("/webhook", json=_valid_payload(host="validator-01"))
+        resp = await client.post("/webhook", json=_valid_payload(host="validator-02"))
+
+        data = await resp.json()
+        assert "bundled_ids" in data
+        assert len(data["bundled_ids"]) >= 1

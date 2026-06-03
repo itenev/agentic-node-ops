@@ -1,7 +1,7 @@
 """Webhook receiver HTTP server.
 
 Accepts Alertmanager POST requests at /webhook, validates,
-normalizes, deduplicates, and appends to alerts.jsonl.
+normalizes, deduplicates, applies storm protection, and appends to alerts.jsonl.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from aiohttp import web
 
 from .dedup import DedupLookup, should_process
 from .schema import ValidationError, validate_alertmanager_payload
+from .storm_protection import StormTracker
 from .types import HermesAlert
 
 log = logging.getLogger(__name__)
@@ -46,11 +47,14 @@ class WebhookHandler:
         self,
         writer: Optional[QueueWriter] = None,
         dedup_lookup: Optional[DedupLookup] = None,
+        storm_tracker: Optional[StormTracker] = None,
     ) -> None:
         self.writer = writer or QueueWriter()
         self.dedup_lookup = dedup_lookup or DedupLookup()
+        self.storm_tracker = storm_tracker or StormTracker()
         self.alerts_received = 0
         self.alerts_deduped = 0
+        self.alerts_bundled = 0
         self.alerts_errors = 0
 
     async def handle_webhook(self, request: web.Request) -> web.Response:
@@ -76,12 +80,37 @@ class WebhookHandler:
 
         offsets = []
         deduped_ids = []
+        bundled_ids = []
+        pending: list[HermesAlert] = []
+
+        # Phase 1: dedup
         for alert in alerts:
             if not should_process(alert, self.dedup_lookup):
                 self.alerts_deduped += 1
                 deduped_ids.append(alert.id)
                 continue
+            pending.append(alert)
 
+        # Phase 2: storm protection
+        final_alerts: list[HermesAlert] = []
+        for alert in pending:
+            bundle = self.storm_tracker.check_alert(alert)
+            if bundle:
+                bundled_alert = bundle.to_alert()
+                final_alerts.append(bundled_alert)
+                self.alerts_bundled += 1
+                bundled_ids.extend([a.id for a in bundle.alerts])
+                log.warning(
+                    "Storm bundle created  id=%s  type=%s  alerts=%d",
+                    bundled_alert.id,
+                    bundled_alert.alert_type,
+                    len(bundle.alerts),
+                )
+            else:
+                final_alerts.append(alert)
+
+        # Phase 3: write to JSONL
+        for alert in final_alerts:
             offset = self.writer.append(alert)
             offsets.append(offset)
             self.alerts_received += 1
@@ -102,7 +131,9 @@ class WebhookHandler:
                 "status": "ok",
                 "alerts_processed": len(offsets),
                 "alerts_deduped": len(deduped_ids),
+                "alerts_bundled": self.alerts_bundled,
                 "deduped_ids": deduped_ids,
+                "bundled_ids": bundled_ids,
                 "offsets": offsets,
             }
         )
@@ -114,6 +145,7 @@ class WebhookHandler:
                 "status": "healthy",
                 "alerts_received": self.alerts_received,
                 "alerts_deduped": self.alerts_deduped,
+                "alerts_bundled": self.alerts_bundled,
                 "alerts_errors": self.alerts_errors,
             }
         )
@@ -126,7 +158,8 @@ def create_app(
     """Create and configure the aiohttp application."""
     writer = QueueWriter(path=jsonl_path)
     dedup = DedupLookup(db_path=db_path)
-    handler = WebhookHandler(writer=writer, dedup_lookup=dedup)
+    storm = StormTracker()
+    handler = WebhookHandler(writer=writer, dedup_lookup=dedup, storm_tracker=storm)
     app = web.Application()
     app.router.add_post("/webhook", handler.handle_webhook)
     app.router.add_get("/health", handler.handle_health)
