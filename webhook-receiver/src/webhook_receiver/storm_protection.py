@@ -4,6 +4,11 @@ Two modes:
 1. Single-host storm: >3 alerts for same host within 30s → bundle
 2. Cross-host correlation: same alert type across >=2 hosts within 60s
    → treat as cluster-wide incident
+
+NOTE: StormTracker state is in-memory only. If the receiver restarts during
+an ongoing storm, the window resets and the burst won't be detected.
+This is an acceptable trade-off — persisting storm state adds meaningful
+complexity for a rare edge case.
 """
 
 from __future__ import annotations

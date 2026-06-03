@@ -6,6 +6,7 @@ to determine whether a new alert should be processed or suppressed.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -47,29 +48,30 @@ class DedupLookup:
         try:
             # Open in read-only mode with WAL for concurrent access
             uri = f"file:{self.db_path}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=5)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                """
-                SELECT severity, resolved_at, fired_at
-                FROM incidents
-                WHERE alert_type = ? AND host = ?
-                ORDER BY fired_at DESC
-                LIMIT 1
-                """,
-                (alert_type, host),
-            )
-            row = cursor.fetchone()
-            conn.close()
+            with contextlib.closing(
+                sqlite3.connect(uri, uri=True, timeout=5)
+            ) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT severity, resolved_at, fired_at
+                    FROM incidents
+                    WHERE alert_type = ? AND host = ?
+                    ORDER BY fired_at DESC
+                    LIMIT 1
+                    """,
+                    (alert_type, host),
+                )
+                row = cursor.fetchone()
 
-            if row is None:
-                return None
+                if row is None:
+                    return None
 
-            return {
-                "severity": row["severity"],
-                "status": "resolved" if row["resolved_at"] else "firing",
-                "processed_at": self._parse_dt(row["fired_at"]),
-            }
+                return {
+                    "severity": row["severity"],
+                    "status": "resolved" if row["resolved_at"] else "firing",
+                    "processed_at": self._parse_dt(row["fired_at"]),
+                }
         except (sqlite3.Error, OSError) as e:
             log.warning("Dedup lookup failed: %s — processing alert", e)
             return None  # Fail open: process the alert

@@ -81,6 +81,7 @@ class WebhookHandler:
         offsets = []
         deduped_ids = []
         bundled_ids = []
+        bundled_count = 0
         pending: list[HermesAlert] = []
 
         # Phase 1: dedup
@@ -99,6 +100,7 @@ class WebhookHandler:
                 bundled_alert = bundle.to_alert()
                 final_alerts.append(bundled_alert)
                 self.alerts_bundled += 1
+                bundled_count += 1
                 bundled_ids.extend([a.id for a in bundle.alerts])
                 log.warning(
                     "Storm bundle created  id=%s  type=%s  alerts=%d",
@@ -131,7 +133,7 @@ class WebhookHandler:
                 "status": "ok",
                 "alerts_processed": len(offsets),
                 "alerts_deduped": len(deduped_ids),
-                "alerts_bundled": self.alerts_bundled,
+                "alerts_bundled": bundled_count,
                 "deduped_ids": deduped_ids,
                 "bundled_ids": bundled_ids,
                 "offsets": offsets,
