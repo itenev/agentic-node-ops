@@ -1,0 +1,44 @@
+id: consensus_desync
+
+triggers:
+  - alert_type: consensus_desync
+    min_severity: high
+
+diagnostics:
+  - id: fetch_sync_status
+    description: "Check consensus client sync status"
+    cmd: "curl -s http://consensus:5052/eth/v1/node/syncing"
+    timeout: 5s
+  - id: fetch_peer_count
+    description: "Get current peer count"
+    cmd: "curl -s http://consensus:5052/eth/v1/node/peer_count"
+    timeout: 5s
+  - id: tail_logs
+    description: "Recent consensus client logs"
+    cmd: "docker logs consensus --tail 100 --since 10m"
+    timeout: 10s
+  - id: check_container
+    description: "Verify consensus container is running"
+    cmd: "docker inspect consensus --format '{{.State.Status}}'"
+    timeout: 5s
+
+suggested_actions:
+  - id: restart_consensus_client
+    description: "Restart the consensus client container"
+    cmd: "docker restart consensus"
+    risk: low
+    reversible: true
+    requires_approval: true
+    approval_timeout: 30m
+    pre_conditions:
+      - "container_status == running"
+
+privileged_actions:
+  - id: restore_from_checkpoint
+    description: "Wipe state and re-sync from a trusted checkpoint"
+    cmd: "rm -rf /var/lib/lighthouse/beacon && lighthouse beacon --checkpoint-sync-url <URL>"
+    risk: high
+    reversible: false
+    requires_approval: true
+    requires_explicit_unlock: true
+    phase: 4_and_above_only

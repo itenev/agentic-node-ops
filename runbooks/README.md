@@ -1,27 +1,16 @@
-# Runbooks for Ethereum node monitoring
+# Runbooks for Ethereum Node Monitoring
 
-# See [docs/runbook-spec.md](../docs/runbook-spec.md) for the runbook schema
+See [docs/runbook-spec.md](../docs/runbook-spec.md) for the runbook schema.
 
-# Example runbook (to be implemented)
+## Available Runbooks
 
-# id: consensus_desync
+| Runbook | Alert Type | Severity |
+|---|---|---|
+| [consensus_desync.yaml](consensus_desync.yaml) | consensus_desync | high+ |
 
-# triggers
+## Adding New Runbooks
 
-# - alert_type: consensus_desync
-
-# min_severity: high
-
-# diagnostics
-
-# - id: fetch_sync_status
-
-# cmd: "curl -s <http://consensus:5052/eth/v1/node/syncing>"
-
-# suggested_actions
-
-# - id: restart_consensus_client
-
-# cmd: "docker restart consensus"
-
-# requires_approval: true
+1. Create `<alert_name>.yaml` in this directory
+2. Follow the schema in `../docs/runbook-spec.md`
+3. Include: `id`, `triggers`, `diagnostics`, `suggested_actions`
+4. `privileged_actions` are locked until Phase 4+

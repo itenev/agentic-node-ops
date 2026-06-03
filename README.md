@@ -15,24 +15,23 @@ Deterministic alerting for known failures, LLM-driven contextual analysis for ev
 | Reasoning | Hermes Agent — context gathering, root-cause correlation, runbook selection |
 | Action | Notifications (Discord + ntfy.sh) + approval-gated remediation (Phase 4+) |
 
-Full design document: [docs/hermes-agent-design-final.md](docs/hermes-agent-design-final.md)
+Design docs: [docs/](docs/) (architecture, webhook spec, runbook spec, notification design, alert set, memory & feedback, slashing protocol).
 
 ## Project Structure
 
 ```
 agentic-node-ops/
-├── docs/
-│   └── hermes-agent-design-final.md  # Implementation spec
-├── src/agentic_node_ops/          # Python source
+├── docs/                          # Design specs (index in hermes-agent-design-final.md)
+├── src/agentic_node_ops/          # Python source (Phase 2 — notifications)
 │   ├── __init__.py
 │   ├── types.py                   # Alert schemas, data models
 │   ├── dispatcher.py              # Alert routing and processing
 │   ├── discord.py                 # Discord notification adapter
 │   └── ntfy.py                    # ntfy.sh notification adapter
-├── tests/                         # Test suite
+├── tests/                         # Test suite (30 tests passing)
 │   └── test_notifications.py
 ├── runbooks/                      # YAML runbooks (Phase 2+)
-├── webhook-receiver/              # Standalone HTTP receiver (Phase 1)
+├── webhook-receiver/              # Standalone HTTP receiver (Phase 1 — in progress)
 └── .gitignore
 ```
 
@@ -40,8 +39,9 @@ agentic-node-ops/
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Webhook receiver + alert normalization + jsonl queue | Design complete |
-| 2 | Hermes integration + runbook matching + operator notifications | Design complete |
+| 0 | Project scaffolding, packaging, CI/CD | ✅ Complete |
+| 1 | Webhook receiver + alert normalization + jsonl queue | 🚧 In progress |
+| 2 | Hermes integration + runbook matching + operator notifications | 🚧 Notifications implemented ✅, rest pending |
 | 3 | Memory layer + feedback loop + host fingerprints | Design complete |
 | 4 | Tier 2 suggested actions + approval state machine + socket-proxy migration + Discord Bot API | Design complete |
 | 5 | Runbook synthesis from historical incidents | Design pending |
