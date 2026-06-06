@@ -44,41 +44,38 @@ def _query_prometheus(query: str) -> Optional[float]:
     return None
 
 
-def _get_docker_container_status(container_name: str) -> Tuple[Optional[str], Optional[str]]:
+def _get_docker_container_status(
+    container_name: str,
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Query Docker socket for container status.
     Returns (status, note).
     """
     api_path = f"/containers/{container_name}/json"
-    request = (
-        f"GET {api_path} HTTP/1.1\r\n"
-        f"Host: docker\r\n"
-        f"Connection: close\r\n"
-        f"\r\n"
-    )
-    
+    request = f"GET {api_path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n"
+
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(2.0)
             sock.connect(DOCKER_SOCKET_PATH)
-            sock.sendall(request.encode('utf-8'))
-            
+            sock.sendall(request.encode("utf-8"))
+
             response = b""
             while True:
                 chunk = sock.recv(4096)
                 if not chunk:
                     break
                 response += chunk
-                
+
             header_end = response.find(b"\r\n\r\n")
             if header_end == -1:
                 return None, "malformed response"
-            
-            body = response[header_end + 4:]
-            data = json.loads(body.decode('utf-8'))
+
+            body = response[header_end + 4 :]
+            data = json.loads(body.decode("utf-8"))
             state = data.get("State", {})
             status = state.get("Status", "unknown")
-            
+
             if status == "running":
                 return "running", None
             else:
@@ -95,7 +92,7 @@ def fetch_context_snapshot(
 ) -> ContextSnapshot:
     """
     Fetch context snapshot for an alert.
-    
+
     Fallback chain:
     1. Primary source (Docker socket for container status, direct metrics)
     2. Prometheus last value
@@ -103,7 +100,7 @@ def fetch_context_snapshot(
     """
     snapshot = ContextSnapshot()
     fallback_used = False
-    
+
     # 1. Container status
     if container:
         status, note = _get_docker_container_status(container)
@@ -122,7 +119,7 @@ def fetch_context_snapshot(
         peer_queries = ["lighthouse_peers", "beacon_peers"]
     elif client in ("prysm", "teku", "nimbus", "lodestar"):
         peer_queries = ["beacon_peers", "p2p_peers"]
-    
+
     for q in peer_queries:
         peers = _query_prometheus(q)
         if peers is not None:
@@ -138,7 +135,7 @@ def fetch_context_snapshot(
         val_queries = ["lighthouse_validator_count", "validator_count"]
     elif client in ("prysm", "teku", "nimbus", "lodestar"):
         val_queries = ["beacon_validators_total", "validator_count"]
-    
+
     for q in val_queries:
         val_count = _query_prometheus(q)
         if val_count is not None:

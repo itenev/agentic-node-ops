@@ -14,7 +14,6 @@ complexity for a rare edge case.
 from __future__ import annotations
 
 import logging
-import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -51,9 +50,11 @@ class AlertBundle:
         if self.is_single_host():
             alert_type = "storm_single_host"
             host = self.host or "unknown"
-            severity = Severity.CRITICAL if any(
-                a.severity.value in ("critical",) for a in self.alerts
-            ) else Severity.HIGH
+            severity = (
+                Severity.CRITICAL
+                if any(a.severity.value in ("critical",) for a in self.alerts)
+                else Severity.HIGH
+            )
             summary = f"Alert storm: {len(self.alerts)} alerts on {host} within 30s"
         else:
             alert_type = "storm_cross_host"
@@ -100,7 +101,9 @@ class StormTracker:
         self.cross_host_window = cross_host_window
 
         # host -> list of (timestamp, alert_type, alert_id)
-        self._host_alerts: dict[str, list[tuple[datetime, str, str]]] = defaultdict(list)
+        self._host_alerts: dict[str, list[tuple[datetime, str, str]]] = defaultdict(
+            list
+        )
         # alert_type -> dict of host -> timestamp
         self._cross_host: dict[str, dict[str, datetime]] = defaultdict(dict)
         self._bundle_counter = 0

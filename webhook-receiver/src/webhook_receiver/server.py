@@ -64,17 +64,13 @@ class WebhookHandler:
             body = await request.json()
         except json.JSONDecodeError:
             self.alerts_errors += 1
-            return web.json_response(
-                {"error": "Invalid JSON"}, status=400
-            )
+            return web.json_response({"error": "Invalid JSON"}, status=400)
 
         try:
             alerts = validate_alertmanager_payload(body)
         except ValidationError as e:
             self.alerts_errors += 1
-            return web.json_response(
-                {"error": str(e)}, status=400
-            )
+            return web.json_response({"error": str(e)}, status=400)
 
         if not alerts:
             return web.json_response({"status": "ok", "alerts_processed": 0})

@@ -27,11 +27,11 @@ from .types import (
 log = logging.getLogger(__name__)
 
 # Maximum lengths enforced by Discord API
-_EMBED_TITLE_MAX       = 256
+_EMBED_TITLE_MAX = 256
 _EMBED_DESCRIPTION_MAX = 4096
-_FIELD_NAME_MAX        = 256
-_FIELD_VALUE_MAX       = 1024
-_EMBED_TOTAL_MAX       = 6000
+_FIELD_NAME_MAX = 256
+_FIELD_VALUE_MAX = 1024
+_EMBED_TOTAL_MAX = 6000
 
 
 class DiscordNotifier:
@@ -44,18 +44,22 @@ class DiscordNotifier:
     """
 
     def __init__(self, webhook_url: str, timeout: float = 10.0) -> None:
-        self._url     = webhook_url.rstrip("/")
+        self._url = webhook_url.rstrip("/")
         self._timeout = timeout
 
     async def send(self, payload: NotificationPayload) -> NotificationResult:
-        embed   = self._build_embed(payload)
+        embed = self._build_embed(payload)
         content = self._build_content(payload)
 
         try:
             message_id = await self._send_webhook(content=content, embeds=[embed])
-            return NotificationResult(channel="discord", success=True, message_id=message_id)
+            return NotificationResult(
+                channel="discord", success=True, message_id=message_id
+            )
         except Exception as exc:
-            log.exception("Discord notification failed for incident %s", payload.incident_id)
+            log.exception(
+                "Discord notification failed for incident %s", payload.incident_id
+            )
             return NotificationResult(channel="discord", success=False, error=str(exc))
 
     # ------------------------------------------------------------------ #
@@ -73,39 +77,47 @@ class DiscordNotifier:
 
         # Diagnostic key/value pairs as inline fields
         for label, value in p.diagnostics.items():
-            fields.append({
-                "name":   _truncate(label, _FIELD_NAME_MAX),
-                "value":  _truncate(f"`{value}`", _FIELD_VALUE_MAX),
-                "inline": True,
-            })
+            fields.append(
+                {
+                    "name": _truncate(label, _FIELD_NAME_MAX),
+                    "value": _truncate(f"`{value}`", _FIELD_VALUE_MAX),
+                    "inline": True,
+                }
+            )
 
         # Proposed action block (Phase 2+: text only; Phase 5+: approval buttons)
         if p.proposed_action:
             action_text = p.proposed_action
             if p.approval_required:
-                action_text += "\n> ⏳ Awaiting your approval — reply **approve** or **skip**"
-            fields.append({
-                "name":   "Proposed action",
-                "value":  _truncate(action_text, _FIELD_VALUE_MAX),
-                "inline": False,
-            })
+                action_text += (
+                    "\n> ⏳ Awaiting your approval — reply **approve** or **skip**"
+                )
+            fields.append(
+                {
+                    "name": "Proposed action",
+                    "value": _truncate(action_text, _FIELD_VALUE_MAX),
+                    "inline": False,
+                }
+            )
 
         # Slashing: prominent forensic evidence path
         if p.is_slashing_risk and p.forensic_path:
-            fields.append({
-                "name":   "⚠️ Evidence bundle",
-                "value":  _truncate(f"`{p.forensic_path}`", _FIELD_VALUE_MAX),
-                "inline": False,
-            })
+            fields.append(
+                {
+                    "name": "⚠️ Evidence bundle",
+                    "value": _truncate(f"`{p.forensic_path}`", _FIELD_VALUE_MAX),
+                    "inline": False,
+                }
+            )
 
         embed: dict = {
-            "title":       title,
+            "title": title,
             "description": description,
-            "color":       color,
-            "fields":      fields,
+            "color": color,
+            "fields": fields,
             "footer": {
                 "text": f"incident {p.incident_id}  ·  host: {p.host}"
-                        + (f"  ·  runbook: {p.runbook_id}" if p.runbook_id else ""),
+                + (f"  ·  runbook: {p.runbook_id}" if p.runbook_id else ""),
             },
         }
 
@@ -179,7 +191,9 @@ class DiscordNotifier:
         # Phase 1-4 stub — log and return
         log.info(
             "update_message called (stub) — message_id=%s resolved=%s note=%s",
-            message_id, resolved, outcome_note,
+            message_id,
+            resolved,
+            outcome_note,
         )
         return True
 
@@ -187,6 +201,7 @@ class DiscordNotifier:
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
+
 
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:

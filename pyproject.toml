@@ -22,9 +22,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "webhook-receiver/tests"]
 asyncio_mode = "auto"
-pythonpath = ["src"]
+pythonpath = ["src", "webhook-receiver/src"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

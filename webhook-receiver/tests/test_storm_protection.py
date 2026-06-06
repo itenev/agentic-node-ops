@@ -1,14 +1,12 @@
 """Tests for alert storm protection — bundling and cross-host correlation."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
-import pytest
 
 from webhook_receiver.storm_protection import (
     StormTracker,
     AlertBundle,
     SINGLE_HOST_THRESHOLD,
-    CROSS_HOST_THRESHOLD,
 )
 from webhook_receiver.types import (
     HermesAlert,
@@ -104,10 +102,12 @@ class TestSingleHostStorm:
         # Manually add old entries
         now = tracker._now()
         old_time = now - timedelta(seconds=60)
-        tracker._host_alerts["validator-01"].extend([
-            (old_time, "consensus_desync", f"old-{i}")
-            for i in range(SINGLE_HOST_THRESHOLD + 1)
-        ])
+        tracker._host_alerts["validator-01"].extend(
+            [
+                (old_time, "consensus_desync", f"old-{i}")
+                for i in range(SINGLE_HOST_THRESHOLD + 1)
+            ]
+        )
 
         # New alert should NOT trigger a bundle (old ones expired)
         alert = _make_alert()
@@ -161,8 +161,12 @@ class TestCrossHostStorm:
     def test_different_alert_types_dont_bundle(self):
         """Different alert types on different hosts should not trigger cross-host storm."""
         tracker = StormTracker()
-        tracker.check_alert(_make_alert(alert_type="consensus_desync", host="validator-01"))
-        bundle = tracker.check_alert(_make_alert(alert_type="validator_duty_miss", host="validator-02"))
+        tracker.check_alert(
+            _make_alert(alert_type="consensus_desync", host="validator-01")
+        )
+        bundle = tracker.check_alert(
+            _make_alert(alert_type="validator_duty_miss", host="validator-02")
+        )
         assert bundle is None
 
     def test_expired_cross_host_alerts_dont_count(self):

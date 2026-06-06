@@ -6,11 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from aiohttp import web
 
-from webhook_receiver.server import create_app, WebhookHandler, QueueWriter
-from webhook_receiver.dedup import DedupLookup
-from webhook_receiver.types import Severity, AlertStatus
+from webhook_receiver.server import create_app
 
 
 @pytest.fixture
@@ -50,7 +47,9 @@ async def client(aiohttp_client, app):
     return await aiohttp_client(app)
 
 
-def _valid_payload(alertname="consensus_desync", severity="high", host="validator-01") -> dict:
+def _valid_payload(
+    alertname="consensus_desync", severity="high", host="validator-01"
+) -> dict:
     """Build a valid Alertmanager webhook payload for testing."""
     return {
         "version": "4",
@@ -132,9 +131,7 @@ class TestWebhookEndpoint:
         assert "error" in data
 
     async def test_missing_alerts_returns_400(self, client):
-        resp = await client.post(
-            "/webhook", json={"version": "4", "no_alerts": True}
-        )
+        resp = await client.post("/webhook", json={"version": "4", "no_alerts": True})
         assert resp.status == 400
 
     async def test_missing_alertname_returns_400(self, client):
@@ -167,7 +164,14 @@ def _seed_incident(db_path, alert_type, host, severity, fired_at, resolved_at=No
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (f"test-{alert_type}-{host}", alert_type, host, severity, fired_at, resolved_at),
+        (
+            f"test-{alert_type}-{host}",
+            alert_type,
+            host,
+            severity,
+            fired_at,
+            resolved_at,
+        ),
     )
     conn.commit()
     conn.close()
@@ -176,12 +180,17 @@ def _seed_incident(db_path, alert_type, host, severity, fired_at, resolved_at=No
 class TestDedupIntegration:
     """Test dedup logic integrated into the webhook endpoint."""
 
-    async def test_dedup_suppresses_duplicate_within_cooldown(self, client, tmp_db, tmp_jsonl):
+    async def test_dedup_suppresses_duplicate_within_cooldown(
+        self, client, tmp_db, tmp_jsonl
+    ):
         """Alert within cooldown window of a prior incident should be deduped."""
         recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
         _seed_incident(
-            tmp_db, "consensus_desync", "validator-01", "high",
-            recent  # within 1-hour cooldown for high severity
+            tmp_db,
+            "consensus_desync",
+            "validator-01",
+            "high",
+            recent,  # within 1-hour cooldown for high severity
         )
         resp = await client.post("/webhook", json=_valid_payload())
         data = await resp.json()
@@ -191,10 +200,7 @@ class TestDedupIntegration:
     async def test_dedup_allows_higher_severity(self, client, tmp_db):
         """A critical alert should pass through even if a high one was recently processed."""
         recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-        _seed_incident(
-            tmp_db, "consensus_desync", "validator-01", "high",
-            recent
-        )
+        _seed_incident(tmp_db, "consensus_desync", "validator-01", "high", recent)
         resp = await client.post(
             "/webhook",
             json=_valid_payload(severity="critical"),
@@ -208,8 +214,12 @@ class TestDedupIntegration:
         recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
         resolved = (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat()
         _seed_incident(
-            tmp_db, "consensus_desync", "validator-01", "high",
-            recent, resolved  # resolved
+            tmp_db,
+            "consensus_desync",
+            "validator-01",
+            "high",
+            recent,
+            resolved,  # resolved
         )
         resp = await client.post("/webhook", json=_valid_payload())
         data = await resp.json()
@@ -219,10 +229,7 @@ class TestDedupIntegration:
     async def test_dedup_allows_different_host(self, client, tmp_db):
         """Same alert type on a different host should not be deduped."""
         recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-        _seed_incident(
-            tmp_db, "consensus_desync", "validator-01", "high",
-            recent
-        )
+        _seed_incident(tmp_db, "consensus_desync", "validator-01", "high", recent)
         resp = await client.post(
             "/webhook",
             json=_valid_payload(host="validator-02"),
@@ -234,10 +241,7 @@ class TestDedupIntegration:
     async def test_health_tracks_dedup_count(self, client, tmp_db):
         """Health endpoint should reflect deduped alert count."""
         recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-        _seed_incident(
-            tmp_db, "consensus_desync", "validator-01", "high",
-            recent
-        )
+        _seed_incident(tmp_db, "consensus_desync", "validator-01", "high", recent)
         await client.post("/webhook", json=_valid_payload())
         resp = await client.get("/health")
         data = await resp.json()
@@ -269,7 +273,7 @@ class TestStormProtectionIntegration:
 
     async def test_cross_host_storm_bundles_alerts(self, client, tmp_jsonl):
         """Same alert type on >=2 hosts within 60s should be bundled."""
-        resp1 = await client.post("/webhook", json=_valid_payload(host="validator-01"))
+        _ = await client.post("/webhook", json=_valid_payload(host="validator-01"))
         resp2 = await client.post("/webhook", json=_valid_payload(host="validator-02"))
 
         data2 = await resp2.json()

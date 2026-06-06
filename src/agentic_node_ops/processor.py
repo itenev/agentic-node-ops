@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import sqlite3
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -20,9 +19,7 @@ from .types import NotificationPayload, Severity
 
 log = logging.getLogger(__name__)
 
-ALERTS_JSONL_PATH = os.environ.get(
-    "ALERTS_JSONL_PATH", "/var/hermes/alerts.jsonl"
-)
+ALERTS_JSONL_PATH = os.environ.get("ALERTS_JSONL_PATH", "/var/hermes/alerts.jsonl")
 ALERT_OFFSET_PATH = os.environ.get(
     "ALERT_OFFSET_PATH", "/var/hermes/alerts.jsonl.offset"
 )
@@ -63,16 +60,20 @@ def _build_payload(alert: dict) -> NotificationPayload:
     )
 
 
-async def process_alerts_async(db: Optional[Database] = None, dispatcher: Optional[NotificationDispatcher] = None, limit: int = 100) -> int:
+async def process_alerts_async(
+    db: Optional[Database] = None,
+    dispatcher: Optional[NotificationDispatcher] = None,
+    limit: int = 100,
+) -> int:
     """
     Process up to `limit` alerts from the jsonl queue asynchronously.
-    
+
     Returns the number of alerts successfully processed.
     """
     db = db or Database()
     dispatcher = dispatcher or NotificationDispatcher()
     jsonl_path = Path(ALERTS_JSONL_PATH)
-    
+
     if not jsonl_path.exists():
         log.debug("No alerts.jsonl found at %s", jsonl_path)
         return 0
@@ -82,12 +83,12 @@ async def process_alerts_async(db: Optional[Database] = None, dispatcher: Option
 
     with open(jsonl_path, "r") as f:
         f.seek(current_offset)
-        
+
         for _ in range(limit):
             line = f.readline()
             if not line:
                 break  # EOF
-            
+
             line = line.strip()
             if not line:
                 continue
@@ -104,16 +105,16 @@ async def process_alerts_async(db: Optional[Database] = None, dispatcher: Option
             try:
                 # 1. Write to SQLite (sole writer)
                 db.insert_incident(alert)
-                
+
                 # 2. Build payload and dispatch to notifications
                 payload = _build_payload(alert)
                 await dispatcher.dispatch(payload)
-                
+
                 # 3. Update offset AFTER successful processing
                 current_offset = f.tell()
                 write_offset(ALERT_OFFSET_PATH, current_offset)
                 processed_count += 1
-                
+
                 log.info(
                     "Processed alert id=%s type=%s host=%s (offset=%d)",
                     alert.get("id"),
@@ -123,16 +124,19 @@ async def process_alerts_async(db: Optional[Database] = None, dispatcher: Option
                 )
             except sqlite3.IntegrityError as e:
                 log.warning(
-                    "Duplicate incident id=%s (UNIQUE constraint violation), advancing offset to prevent infinite retry: %s", 
-                    alert.get("id", "unknown"), e
+                    "Duplicate incident id=%s (UNIQUE constraint violation), advancing offset to prevent infinite retry: %s",
+                    alert.get("id", "unknown"),
+                    e,
                 )
                 current_offset = f.tell()
                 write_offset(ALERT_OFFSET_PATH, current_offset)
                 continue
             except Exception as e:
                 log.error(
-                    "Failed to process alert id=%s: %s", 
-                    alert.get("id", "unknown"), e, exc_info=True
+                    "Failed to process alert id=%s: %s",
+                    alert.get("id", "unknown"),
+                    e,
+                    exc_info=True,
                 )
                 # Offset is NOT advanced on SQLite write failure — alert will be retried.
                 # Note: notification dispatch failures are captured in NotificationResult,
@@ -141,11 +145,15 @@ async def process_alerts_async(db: Optional[Database] = None, dispatcher: Option
 
     if processed_count > 0:
         log.info("Processed %d alert(s) from queue", processed_count)
-        
+
     return processed_count
 
 
-async def _run_loop_async(db: Optional[Database], dispatcher: Optional[NotificationDispatcher], poll_interval: float) -> None:
+async def _run_loop_async(
+    db: Optional[Database],
+    dispatcher: Optional[NotificationDispatcher],
+    poll_interval: float,
+) -> None:
     """Internal async loop that processes alerts continuously."""
     while True:
         try:
@@ -160,10 +168,14 @@ async def _run_loop_async(db: Optional[Database], dispatcher: Optional[Notificat
             await asyncio.sleep(poll_interval)
 
 
-def run_processor_loop(db: Optional[Database] = None, dispatcher: Optional[NotificationDispatcher] = None, poll_interval: float = 5.0) -> None:
+def run_processor_loop(
+    db: Optional[Database] = None,
+    dispatcher: Optional[NotificationDispatcher] = None,
+    poll_interval: float = 5.0,
+) -> None:
     """
     Run the processor in a continuous loop.
-    
+
     Args:
         db: Database instance (optional, creates default if None)
         dispatcher: NotificationDispatcher instance (optional, creates default if None)
