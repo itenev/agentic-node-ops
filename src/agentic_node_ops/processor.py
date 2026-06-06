@@ -1,0 +1,160 @@
+"""Alert processor: reads jsonl, drains to SQLite, and dispatches.
+
+This is the main loop that processes alerts queued by the webhook receiver.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from .database import Database
+from .dispatcher import NotificationDispatcher
+from .types import NotificationPayload, Severity
+
+log = logging.getLogger(__name__)
+
+ALERTS_JSONL_PATH = os.environ.get(
+    "ALERTS_JSONL_PATH", "/var/hermes/alerts.jsonl"
+)
+ALERT_OFFSET_PATH = os.environ.get(
+    "ALERT_OFFSET_PATH", "/var/hermes/alerts.jsonl.offset"
+)
+
+
+def read_offset(path: str) -> int:
+    """Read current offset (0 if file absent — start from beginning)."""
+    try:
+        return int(Path(path).read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def write_offset(path: str, offset: int) -> None:
+    """Write new offset atomically via tempfile + rename."""
+    tmp_path = path + ".tmp"
+    Path(tmp_path).write_text(str(offset))
+    os.replace(tmp_path, path)  # atomic on POSIX
+
+
+def _build_payload(alert: dict) -> NotificationPayload:
+    """Convert a raw alert dict into a NotificationPayload."""
+    severity_str = alert.get("severity", "medium").lower()
+    try:
+        severity = Severity(severity_str)
+    except ValueError:
+        severity = Severity.MEDIUM
+
+    return NotificationPayload(
+        incident_id=alert.get("id", "unknown"),
+        alert_type=alert.get("alert_type", "unknown"),
+        severity=severity,
+        host=alert.get("host", "unknown"),
+        title=f"{alert.get('alert_type', 'Alert')} on {alert.get('host', 'host')}",
+        summary="Alert received. Hermes analysis pending.",
+        diagnostics=alert.get("context_snapshot", {}),
+        runbook_id=alert.get("runbook_hint"),
+    )
+
+
+async def process_alerts_async(db: Optional[Database] = None, dispatcher: Optional[NotificationDispatcher] = None, limit: int = 100) -> int:
+    """
+    Process up to `limit` alerts from the jsonl queue asynchronously.
+    
+    Returns the number of alerts successfully processed.
+    """
+    db = db or Database()
+    dispatcher = dispatcher or NotificationDispatcher()
+    jsonl_path = Path(ALERTS_JSONL_PATH)
+    
+    if not jsonl_path.exists():
+        log.debug("No alerts.jsonl found at %s", jsonl_path)
+        return 0
+
+    current_offset = read_offset(ALERT_OFFSET_PATH)
+    processed_count = 0
+
+    with open(jsonl_path, "r") as f:
+        f.seek(current_offset)
+        
+        for _ in range(limit):
+            line = f.readline()
+            if not line:
+                break  # EOF
+            
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                alert = json.loads(line)
+            except json.JSONDecodeError as e:
+                log.error("Failed to parse JSON line at offset %d: %s", f.tell(), e)
+                # Skip malformed line by advancing offset
+                current_offset = f.tell()
+                write_offset(ALERT_OFFSET_PATH, current_offset)
+                continue
+
+            try:
+                # 1. Write to SQLite (sole writer)
+                db.insert_incident(alert)
+                
+                # 2. Build payload and dispatch to notifications
+                payload = _build_payload(alert)
+                await dispatcher.dispatch(payload)
+                
+                # 3. Update offset AFTER successful processing
+                current_offset = f.tell()
+                write_offset(ALERT_OFFSET_PATH, current_offset)
+                processed_count += 1
+                
+                log.info(
+                    "Processed alert id=%s type=%s host=%s (offset=%d)",
+                    alert.get("id"),
+                    alert.get("alert_type"),
+                    alert.get("host"),
+                    current_offset,
+                )
+            except Exception as e:
+                log.error(
+                    "Failed to process alert id=%s: %s", 
+                    alert.get("id", "unknown"), e, exc_info=True
+                )
+                # Do NOT advance offset on processing failure so it can be retried
+                break
+
+    if processed_count > 0:
+        log.info("Processed %d alert(s) from queue", processed_count)
+        
+    return processed_count
+
+
+def run_processor_loop(db: Optional[Database] = None, dispatcher: Optional[NotificationDispatcher] = None, poll_interval: float = 5.0) -> None:
+    """
+    Run the processor in a continuous loop.
+    
+    Args:
+        db: Database instance (optional, creates default if None)
+        dispatcher: NotificationDispatcher instance (optional, creates default if None)
+        poll_interval: Seconds to wait between polling cycles when queue is empty
+    """
+    import time
+    
+    log.info("Starting alert processor loop (poll interval: %ss)", poll_interval)
+    
+    while True:
+        try:
+            count = asyncio.run(process_alerts_async(db=db, dispatcher=dispatcher))
+            if count == 0:
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            log.info("Processor loop interrupted, shutting down")
+            break
+        except Exception as e:
+            log.error("Unexpected error in processor loop: %s", e, exc_info=True)
+            time.sleep(poll_interval)

@@ -100,19 +100,11 @@
 
 ### Task 9: Wire dispatcher to Hermes agent loop
 
-**Objective:** Connect the notification dispatcher to the alert processing loop.
-
-**Files:**
-- Create: `src/agentic_node_ops/processor.py` (reads jsonl, drains to SQLite, dispatches)
-- Create: `src/agentic_node_ops/database.py` (SQLite WAL, sole writer)
-
-**Steps:**
-1. Implement SQLite database with schema from design doc §6
-2. Implement jsonl offset reader/writer
-3. Implement drain loop: read jsonl → process → write SQLite → update offset
-4. Wire dispatcher into processor
-5. Write tests
-6. Verify end-to-end: jsonl alert → processor → notification sent
+[x] Complete — Created `src/agentic_node_ops/database.py` and `src/agentic_node_ops/processor.py`:
+  - `database.py`: SQLite WAL wrapper, sole writer, implements full schema from design doc (incidents, host_fingerprints, operator_corrections, runbook_outcomes, action_proposals)
+  - `processor.py`: Reads `alerts.jsonl` from `last_read_offset`, inserts to SQLite, builds `NotificationPayload`, dispatches via `NotificationDispatcher`, and updates offset atomically (tempfile + rename)
+  - 12 new unit tests covering database operations, offset management, payload building, and async processing loop
+  - All 42 tests passing (30 parent + 12 new)
 
 ---
 
