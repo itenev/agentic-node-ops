@@ -64,6 +64,10 @@ class TestGetDockerContainerStatus:
         status, note = _get_docker_container_status("consensus")
         assert status == "running"
         assert note is None
+        
+        # Verify Connection: close header is sent to prevent hanging
+        sent_request = mock_sock.sendall.call_args[0][0].decode('utf-8')
+        assert "Connection: close\r\n" in sent_request
 
     @patch("webhook_receiver.context_fetcher.socket.socket")
     def test_docker_status_exited(self, mock_socket_cls):
@@ -111,13 +115,13 @@ class TestFetchContextSnapshot:
     @patch("webhook_receiver.context_fetcher._query_prometheus")
     def test_fetch_docker_fallback_to_prometheus(self, mock_prom, mock_docker):
         mock_docker.return_value = (None, "docker socket error")
-        # Calls: 1. container up, 2. lighthouse_peers, 3. lighthouse_validator_count
-        mock_prom.side_effect = [1.0, 50.0, 3.0]
+        # Calls: 1. lighthouse_peers, 2. lighthouse_validator_count
+        mock_prom.side_effect = [50.0, 3.0]
         
         snapshot = fetch_context_snapshot("host1", "consensus", "lighthouse")
         
-        assert snapshot.container_status == "running"
-        assert "prometheus fallback" in snapshot.container_status_note
+        assert snapshot.container_status == "unavailable"
+        assert snapshot.container_status_note == "docker socket unreachable"
         assert snapshot.peer_count == 50
         assert snapshot.validator_count == 3
         assert snapshot.prometheus_fallback_used is True

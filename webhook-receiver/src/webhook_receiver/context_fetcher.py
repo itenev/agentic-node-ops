@@ -50,7 +50,12 @@ def _get_docker_container_status(container_name: str) -> Tuple[Optional[str], Op
     Returns (status, note).
     """
     api_path = f"/containers/{container_name}/json"
-    request = f"GET {api_path} HTTP/1.1\r\nHost: docker\r\n\r\n"
+    request = (
+        f"GET {api_path} HTTP/1.1\r\n"
+        f"Host: docker\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    )
     
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -107,16 +112,9 @@ def fetch_context_snapshot(
             if note:
                 snapshot.container_status_note = note
         else:
-            # Fallback to Prometheus: check if container is up
-            prom_up = _query_prometheus(f'up{{container="{container}"}}')
-            if prom_up == 1.0:
-                snapshot.container_status = "running"
-                snapshot.container_status_note = "docker socket unreachable, using prometheus fallback"
-                fallback_used = True
-            else:
-                snapshot.container_status = "unavailable"
-                snapshot.container_status_note = "docker socket and prometheus unreachable"
-                fallback_used = True
+            snapshot.container_status = "unavailable"
+            snapshot.container_status_note = "docker socket unreachable"
+            fallback_used = True
 
     # 2. Peer count
     peer_queries = []
@@ -138,7 +136,7 @@ def fetch_context_snapshot(
     val_queries = []
     if client == "lighthouse":
         val_queries = ["lighthouse_validator_count", "validator_count"]
-    elif client in ("prysm", "teku"):
+    elif client in ("prysm", "teku", "nimbus", "lodestar"):
         val_queries = ["beacon_validators_total", "validator_count"]
     
     for q in val_queries:
