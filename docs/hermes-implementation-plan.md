@@ -86,18 +86,13 @@
 
 ### Task 8: Implement context snapshot fetch
 
-**Objective:** Pre-fetch cheap context (peer count, sync status, container status) at receive time with Prometheus fallback.
-
-**Files:**
-- Modify: `webhook-receiver/src/server.py`
-- Create: `webhook-receiver/src/context_fetcher.py`
-
-**Steps:**
-1. Implement Prometheus queries for peer count, sync status, etc.
-2. Implement Docker socket queries for container status
-3. Implement fallback chain: primary source → Prometheus last value → "unavailable"
-4. Write tests
-5. Verify context snapshot is attached to HermesAlert
+[x] Complete — Created `webhook-receiver/src/webhook_receiver/context_fetcher.py`:
+  - `_query_prometheus`: Queries Prometheus for instant vector values (2s timeout)
+  - `_get_docker_container_status`: Queries Docker socket for container state
+  - `fetch_context_snapshot`: Orchestrates fallback chain (Docker → Prometheus → "unavailable")
+  - Queries peer count and validator count based on client type (lighthouse, prysm, teku, etc.)
+  - Integrated into `WebhookHandler` — context snapshot attached to each `HermesAlert` before processing
+  - 10 unit tests covering success, failure, and fallback scenarios
 
 ---
 

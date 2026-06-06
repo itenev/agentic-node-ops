@@ -14,6 +14,7 @@ from typing import Optional
 
 from aiohttp import web
 
+from .context_fetcher import fetch_context_snapshot
 from .dedup import DedupLookup, should_process
 from .schema import ValidationError, validate_alertmanager_payload
 from .storm_protection import StormTracker
@@ -77,6 +78,14 @@ class WebhookHandler:
 
         if not alerts:
             return web.json_response({"status": "ok", "alerts_processed": 0})
+
+        # Pre-fetch context snapshot for each alert
+        for alert in alerts:
+            alert.context_snapshot = fetch_context_snapshot(
+                host=alert.host,
+                container=alert.container,
+                client=alert.client,
+            )
 
         offsets = []
         deduped_ids = []
