@@ -154,3 +154,45 @@ async def test_process_alerts_async_malformed_json():
             last = db.get_last_processed("test", "h1")
             assert last is not None
             assert last["id"] == "evt_good"
+
+
+@pytest.mark.asyncio
+async def test_process_alerts_async_duplicate_incident():
+    """Test process_alerts_async handles UNIQUE constraint violations by advancing offset."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        jsonl_path = os.path.join(tmpdir, "alerts.jsonl")
+        offset_path = os.path.join(tmpdir, "offset.txt")
+        db_path = os.path.join(tmpdir, "incidents.db")
+        
+        # Create two identical alerts (same ID)
+        alert = {
+            "id": "evt_dup",
+            "alert_type": "test_alert",
+            "severity": "high",
+            "host": "test-host",
+            "fired_at": "2025-01-01T00:00:00Z",
+            "context_snapshot": {}
+        }
+        
+        with open(jsonl_path, "w") as f:
+            f.write(json.dumps(alert) + "\n")
+            f.write(json.dumps(alert) + "\n")
+            
+        with patch("agentic_node_ops.processor.ALERTS_JSONL_PATH", jsonl_path), \
+             patch("agentic_node_ops.processor.ALERT_OFFSET_PATH", offset_path):
+            
+            from agentic_node_ops.database import Database
+            from agentic_node_ops.dispatcher import NotificationDispatcher
+            
+            mock_dispatcher = MagicMock(spec=NotificationDispatcher)
+            mock_dispatcher.dispatch = AsyncMock(return_value=[])
+            
+            db = Database(db_path=db_path)
+            
+            count = await process_alerts_async(db=db, dispatcher=mock_dispatcher)
+            
+            # First alert processes, second hits UNIQUE constraint and is skipped
+            assert count == 1
+            
+            # Offset should have advanced past BOTH lines
+            assert read_offset(offset_path) > 0

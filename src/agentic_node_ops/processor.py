@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -120,18 +121,43 @@ async def process_alerts_async(db: Optional[Database] = None, dispatcher: Option
                     alert.get("host"),
                     current_offset,
                 )
+            except sqlite3.IntegrityError as e:
+                log.warning(
+                    "Duplicate incident id=%s (UNIQUE constraint violation), advancing offset to prevent infinite retry: %s", 
+                    alert.get("id", "unknown"), e
+                )
+                current_offset = f.tell()
+                write_offset(ALERT_OFFSET_PATH, current_offset)
+                continue
             except Exception as e:
                 log.error(
                     "Failed to process alert id=%s: %s", 
                     alert.get("id", "unknown"), e, exc_info=True
                 )
-                # Do NOT advance offset on processing failure so it can be retried
+                # Offset is NOT advanced on SQLite write failure — alert will be retried.
+                # Note: notification dispatch failures are captured in NotificationResult,
+                # not raised as exceptions, so they do not trigger this path.
                 break
 
     if processed_count > 0:
         log.info("Processed %d alert(s) from queue", processed_count)
         
     return processed_count
+
+
+async def _run_loop_async(db: Optional[Database], dispatcher: Optional[NotificationDispatcher], poll_interval: float) -> None:
+    """Internal async loop that processes alerts continuously."""
+    while True:
+        try:
+            count = await process_alerts_async(db=db, dispatcher=dispatcher)
+            if count == 0:
+                await asyncio.sleep(poll_interval)
+        except KeyboardInterrupt:
+            log.info("Processor loop interrupted, shutting down")
+            break
+        except Exception as e:
+            log.error("Unexpected error in processor loop: %s", e, exc_info=True)
+            await asyncio.sleep(poll_interval)
 
 
 def run_processor_loop(db: Optional[Database] = None, dispatcher: Optional[NotificationDispatcher] = None, poll_interval: float = 5.0) -> None:
@@ -143,18 +169,5 @@ def run_processor_loop(db: Optional[Database] = None, dispatcher: Optional[Notif
         dispatcher: NotificationDispatcher instance (optional, creates default if None)
         poll_interval: Seconds to wait between polling cycles when queue is empty
     """
-    import time
-    
     log.info("Starting alert processor loop (poll interval: %ss)", poll_interval)
-    
-    while True:
-        try:
-            count = asyncio.run(process_alerts_async(db=db, dispatcher=dispatcher))
-            if count == 0:
-                time.sleep(poll_interval)
-        except KeyboardInterrupt:
-            log.info("Processor loop interrupted, shutting down")
-            break
-        except Exception as e:
-            log.error("Unexpected error in processor loop: %s", e, exc_info=True)
-            time.sleep(poll_interval)
+    asyncio.run(_run_loop_async(db, dispatcher, poll_interval))
