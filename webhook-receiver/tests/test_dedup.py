@@ -5,11 +5,18 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from webhook_receiver.dedup import DedupLookup, should_process, COOLDOWN
-from webhook_receiver.types import HermesAlert, Severity, AlertStatus, _generate_event_id
+from webhook_receiver.dedup import DedupLookup, should_process
+from webhook_receiver.types import (
+    HermesAlert,
+    Severity,
+    AlertStatus,
+    _generate_event_id,
+)
 
 
-def _make_alert(alert_type="consensus_desync", severity=Severity.HIGH, host="validator-01") -> HermesAlert:
+def _make_alert(
+    alert_type="consensus_desync", severity=Severity.HIGH, host="validator-01"
+) -> HermesAlert:
     return HermesAlert(
         id=_generate_event_id(alert_type),
         alert_type=alert_type,
@@ -55,7 +62,14 @@ class TestDedupLookup:
         conn = sqlite3.connect(lookup_with_db.db_path)
         conn.execute(
             "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("t1", "consensus_desync", "validator-01", "high", (now - timedelta(hours=2)).isoformat(), now.isoformat()),
+            (
+                "t1",
+                "consensus_desync",
+                "validator-01",
+                "high",
+                (now - timedelta(hours=2)).isoformat(),
+                now.isoformat(),
+            ),
         )
         conn.execute(
             "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -88,7 +102,14 @@ class TestShouldProcess:
         conn = sqlite3.connect(lookup_with_db.db_path)
         conn.execute(
             "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("t1", "consensus_desync", "validator-01", "high", (now - timedelta(minutes=5)).isoformat(), now.isoformat()),
+            (
+                "t1",
+                "consensus_desync",
+                "validator-01",
+                "high",
+                (now - timedelta(minutes=5)).isoformat(),
+                now.isoformat(),
+            ),
         )
         conn.commit()
         conn.close()
@@ -167,7 +188,14 @@ class TestShouldProcess:
         conn = sqlite3.connect(lookup_with_db.db_path)
         conn.execute(
             "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("t1", "consensus_desync", "validator-01", "critical", past.isoformat(), None),
+            (
+                "t1",
+                "consensus_desync",
+                "validator-01",
+                "critical",
+                past.isoformat(),
+                None,
+            ),
         )
         conn.commit()
         conn.close()
@@ -180,7 +208,14 @@ class TestShouldProcess:
         conn = sqlite3.connect(lookup_with_db.db_path)
         conn.execute(
             "INSERT INTO incidents (id, alert_type, host, severity, fired_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("t1", "consensus_desync", "validator-01", "critical", past.isoformat(), None),
+            (
+                "t1",
+                "consensus_desync",
+                "validator-01",
+                "critical",
+                past.isoformat(),
+                None,
+            ),
         )
         conn.commit()
         conn.close()

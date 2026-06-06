@@ -16,12 +16,17 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-aiohttp>=1.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.3.0",
+    "pip-audit>=2.7",
+    "aiohttp>=3.9",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "webhook-receiver/tests"]
 asyncio_mode = "auto"
-pythonpath = ["src"]
+pythonpath = ["src", "webhook-receiver/src"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

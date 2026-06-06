@@ -19,8 +19,8 @@ import os
 from typing import Optional
 
 from .discord import DiscordNotifier
-from .ntfy    import NtfyNotifier
-from .types   import CHANNEL_ROUTING, NotificationPayload, NotificationResult, Severity
+from .ntfy import NtfyNotifier
+from .types import CHANNEL_ROUTING, NotificationPayload, NotificationResult
 
 log = logging.getLogger(__name__)
 
@@ -42,13 +42,13 @@ class NotificationDispatcher:
     def __init__(
         self,
         discord_webhook_url: Optional[str] = None,
-        ntfy_topic:          Optional[str] = None,
-        ntfy_server_url:     Optional[str] = None,
-        ntfy_username:       Optional[str] = None,
-        ntfy_password:       Optional[str] = None,
+        ntfy_topic: Optional[str] = None,
+        ntfy_server_url: Optional[str] = None,
+        ntfy_username: Optional[str] = None,
+        ntfy_password: Optional[str] = None,
     ) -> None:
         webhook = discord_webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")
-        topic   = ntfy_topic          or os.environ.get("NTFY_TOPIC", "")
+        topic = ntfy_topic or os.environ.get("NTFY_TOPIC", "")
 
         if not webhook:
             raise ValueError("DISCORD_WEBHOOK_URL is required")
@@ -56,11 +56,12 @@ class NotificationDispatcher:
             raise ValueError("NTFY_TOPIC is required")
 
         self._discord = DiscordNotifier(webhook_url=webhook)
-        self._ntfy    = NtfyNotifier(
-            topic      = topic,
-            server_url = ntfy_server_url or os.environ.get("NTFY_SERVER_URL", "https://ntfy.sh"),
-            username   = ntfy_username   or os.environ.get("NTFY_USERNAME"),
-            password   = ntfy_password   or os.environ.get("NTFY_PASSWORD"),
+        self._ntfy = NtfyNotifier(
+            topic=topic,
+            server_url=ntfy_server_url
+            or os.environ.get("NTFY_SERVER_URL", "https://ntfy.sh"),
+            username=ntfy_username or os.environ.get("NTFY_USERNAME"),
+            password=ntfy_password or os.environ.get("NTFY_PASSWORD"),
         )
 
     async def dispatch(self, payload: NotificationPayload) -> list[NotificationResult]:
@@ -87,12 +88,16 @@ class NotificationDispatcher:
             if not r.success:
                 log.error(
                     "Notification failed  channel=%s  incident=%s  error=%s",
-                    r.channel, payload.incident_id, r.error,
+                    r.channel,
+                    payload.incident_id,
+                    r.error,
                 )
             else:
                 log.info(
                     "Notification sent  channel=%s  incident=%s  message_id=%s",
-                    r.channel, payload.incident_id, r.message_id,
+                    r.channel,
+                    payload.incident_id,
+                    r.message_id,
                 )
 
         return results

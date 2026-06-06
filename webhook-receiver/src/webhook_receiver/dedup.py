@@ -31,9 +31,7 @@ class DedupLookup:
     def __init__(self, db_path: Optional[str] = None) -> None:
         self.db_path = Path(db_path) if db_path else None
 
-    def get_last_processed(
-        self, alert_type: str, host: str
-    ) -> Optional[dict]:
+    def get_last_processed(self, alert_type: str, host: str) -> Optional[dict]:
         """
         Return the most recent incident for (alert_type, host) from SQLite.
 
@@ -48,9 +46,7 @@ class DedupLookup:
         try:
             # Open in read-only mode with WAL for concurrent access
             uri = f"file:{self.db_path}?mode=ro"
-            with contextlib.closing(
-                sqlite3.connect(uri, uri=True, timeout=5)
-            ) as conn:
+            with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
@@ -130,8 +126,7 @@ def should_process(alert: HermesAlert, lookup: DedupLookup) -> bool:
 
     # Rule 5: deduplicate
     log.info(
-        "Deduplicating  id=%s  type=%s  host=%s  "
-        "last_processed=%s ago  cooldown=%s",
+        "Deduplicating  id=%s  type=%s  host=%s  last_processed=%s ago  cooldown=%s",
         alert.id,
         alert.alert_type,
         alert.host,

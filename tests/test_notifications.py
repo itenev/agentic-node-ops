@@ -19,13 +19,14 @@ from agentic_node_ops.types import (
     DISCORD_COLOR,
 )
 from agentic_node_ops.discord import DiscordNotifier, _truncate
-from agentic_node_ops.ntfy    import NtfyNotifier, _build_title, _build_message, _build_tags
+from agentic_node_ops.ntfy import _build_title, _build_message, _build_tags
 from agentic_node_ops.dispatcher import NotificationDispatcher
 
 
 # ------------------------------------------------------------------ #
 # Fixtures                                                             #
 # ------------------------------------------------------------------ #
+
 
 def make_payload(
     severity=Severity.HIGH,
@@ -34,24 +35,25 @@ def make_payload(
     approval_required=False,
 ) -> NotificationPayload:
     return NotificationPayload(
-        incident_id       = "evt_abc123_1704067200",
-        alert_type        = alert_type,
-        severity          = severity,
-        host              = "validator-01",
-        title             = "Lighthouse is 184 slots behind",
-        summary           = "Peer count collapsed from 68 → 2. Likely networking issue.",
-        diagnostics       = {"Peer count": "2", "Slot distance": "184", "EL status": "synced"},
-        runbook_id        = "consensus_desync",
-        proposed_action   = "Restart lighthouse container" if approval_required else None,
-        approval_required = approval_required,
-        is_slashing_risk  = is_slashing,
-        forensic_path     = "/var/hermes/incidents/slash_20250101/" if is_slashing else None,
+        incident_id="evt_abc123_1704067200",
+        alert_type=alert_type,
+        severity=severity,
+        host="validator-01",
+        title="Lighthouse is 184 slots behind",
+        summary="Peer count collapsed from 68 → 2. Likely networking issue.",
+        diagnostics={"Peer count": "2", "Slot distance": "184", "EL status": "synced"},
+        runbook_id="consensus_desync",
+        proposed_action="Restart lighthouse container" if approval_required else None,
+        approval_required=approval_required,
+        is_slashing_risk=is_slashing,
+        forensic_path="/var/hermes/incidents/slash_20250101/" if is_slashing else None,
     )
 
 
 # ------------------------------------------------------------------ #
 # Routing table                                                        #
 # ------------------------------------------------------------------ #
+
 
 class TestRoutingTable:
     def test_low_medium_high_discord_only(self):
@@ -72,9 +74,12 @@ class TestRoutingTable:
 # Discord embed construction                                           #
 # ------------------------------------------------------------------ #
 
+
 class TestDiscordEmbed:
     def setup_method(self):
-        self.notifier = DiscordNotifier(webhook_url="https://discord.com/api/webhooks/fake/url")
+        self.notifier = DiscordNotifier(
+            webhook_url="https://discord.com/api/webhooks/fake/url"
+        )
 
     def test_embed_color_matches_severity(self):
         for sev in Severity:
@@ -142,6 +147,7 @@ class TestDiscordEmbed:
 # ntfy payload construction                                            #
 # ------------------------------------------------------------------ #
 
+
 class TestNtfyPayload:
     def test_slashing_title_prefix(self):
         p = make_payload(is_slashing=True, severity=Severity.CRITICAL)
@@ -188,13 +194,18 @@ class TestNtfyPayload:
 # Dispatcher routing                                                   #
 # ------------------------------------------------------------------ #
 
+
 class TestDispatcher:
     def _make_dispatcher(self, discord_result=None, ntfy_result=None):
         d = NotificationDispatcher.__new__(NotificationDispatcher)
         d._discord = MagicMock()
-        d._ntfy    = MagicMock()
-        d._discord.send = AsyncMock(return_value=discord_result or NotificationResult("discord", True, "msg123"))
-        d._ntfy.send    = AsyncMock(return_value=ntfy_result    or NotificationResult("ntfy",    True))
+        d._ntfy = MagicMock()
+        d._discord.send = AsyncMock(
+            return_value=discord_result or NotificationResult("discord", True, "msg123")
+        )
+        d._ntfy.send = AsyncMock(
+            return_value=ntfy_result or NotificationResult("ntfy", True)
+        )
         return d
 
     async def test_high_severity_discord_only(self):
@@ -241,4 +252,6 @@ class TestDispatcher:
 
     def test_dispatcher_requires_ntfy_topic(self):
         with pytest.raises(ValueError, match="NTFY_TOPIC"):
-            NotificationDispatcher(discord_webhook_url="https://discord.com/fake", ntfy_topic="")
+            NotificationDispatcher(
+                discord_webhook_url="https://discord.com/fake", ntfy_topic=""
+            )

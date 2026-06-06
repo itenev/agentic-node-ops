@@ -26,7 +26,7 @@ _DEFAULT_SERVER = "https://ntfy.sh"
 # ntfy action buttons (Phase 5+: approval via ntfy actions)
 # https://docs.ntfy.sh/publish/#action-buttons
 _APPROVE_ACTION = "http, Approve, {callback_url}/approve, method=POST, clear=true"
-_SKIP_ACTION    = "http, Skip, {callback_url}/skip, method=POST, clear=true"
+_SKIP_ACTION = "http, Skip, {callback_url}/skip, method=POST, clear=true"
 
 
 class NtfyNotifier:
@@ -48,33 +48,35 @@ class NtfyNotifier:
         self,
         topic: str,
         server_url: str = _DEFAULT_SERVER,
-        timeout: float  = 10.0,
+        timeout: float = 10.0,
         # Optional: set these if your ntfy instance requires auth
         username: Optional[str] = None,
         password: Optional[str] = None,
     ) -> None:
-        self._url     = f"{server_url.rstrip('/')}/{topic}"
+        self._url = f"{server_url.rstrip('/')}/{topic}"
         self._timeout = timeout
-        self._auth    = (username, password) if username else None
+        self._auth = (username, password) if username else None
 
     async def send(self, payload: NotificationPayload) -> NotificationResult:
         try:
             await self._post(payload)
             return NotificationResult(channel="ntfy", success=True)
         except Exception as exc:
-            log.exception("ntfy notification failed for incident %s", payload.incident_id)
+            log.exception(
+                "ntfy notification failed for incident %s", payload.incident_id
+            )
             return NotificationResult(channel="ntfy", success=False, error=str(exc))
 
     async def _post(self, p: NotificationPayload) -> None:
-        title   = _build_title(p)
+        title = _build_title(p)
         message = _build_message(p)
-        tags    = _build_tags(p)
+        tags = _build_tags(p)
         priority = NTFY_PRIORITY[p.severity]
 
         headers = {
-            "Title":    title,
+            "Title": title,
             "Priority": priority,
-            "Tags":     ",".join(tags),
+            "Tags": ",".join(tags),
         }
 
         # Phase 5: add action buttons so operator can approve from notification
@@ -98,17 +100,20 @@ class NtfyNotifier:
             resp = await client.post(self._url, **kwargs)
 
         if resp.status_code != 200:
-            raise RuntimeError(
-                f"ntfy returned {resp.status_code}: {resp.text[:200]}"
-            )
+            raise RuntimeError(f"ntfy returned {resp.status_code}: {resp.text[:200]}")
 
 
 # ------------------------------------------------------------------ #
 # Payload builders                                                     #
 # ------------------------------------------------------------------ #
 
+
 def _build_title(p: NotificationPayload) -> str:
-    prefix = "🚨 SLASHING RISK" if p.is_slashing_risk else p.alert_type.upper().replace("_", " ")
+    prefix = (
+        "🚨 SLASHING RISK"
+        if p.is_slashing_risk
+        else p.alert_type.upper().replace("_", " ")
+    )
     return f"{prefix} — {p.host}"
 
 
@@ -149,5 +154,5 @@ def _build_tags(p: NotificationPayload) -> list[str]:
     else:
         tags += ["information_source"]
 
-    tags.append(p.alert_type)   # freeform tag, shown as text label
+    tags.append(p.alert_type)  # freeform tag, shown as text label
     return tags

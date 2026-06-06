@@ -100,9 +100,7 @@ class TestValidatePayload:
         assert len(alerts) == 0
 
     def test_client_extraction_from_labels(self):
-        payload = _am_payload(
-            alerts=[_am_alert(extra_labels={"client": "lighthouse"})]
-        )
+        payload = _am_payload(alerts=[_am_alert(extra_labels={"client": "lighthouse"})])
         alerts = validate_alertmanager_payload(payload)
         assert alerts[0].client == "lighthouse"
 

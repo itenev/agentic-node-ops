@@ -50,7 +50,18 @@ def _extract_client(labels: dict) -> Optional[str]:
         if val:
             # e.g. "lighthouse", "prysm", "teku", "nimbus", "lodestar"
             name = val.lower().split("/")[0].split("-")[0]
-            if name in ("lighthouse", "prysm", "teku", "nimbus", "lodestar", "erigon", "geth", "besu", "nethermind", "reth"):
+            if name in (
+                "lighthouse",
+                "prysm",
+                "teku",
+                "nimbus",
+                "lodestar",
+                "erigon",
+                "geth",
+                "besu",
+                "nethermind",
+                "reth",
+            ):
                 return name
     return None
 
@@ -85,7 +96,7 @@ def normalize_alertmanager_alert(am_alert: dict) -> HermesAlert:
     }
     """
     labels = am_alert.get("labels", {})
-    annotations = am_alert.get("annotations", {})
+    _ = am_alert.get("annotations", {})  # Reserved for future use
     status = am_alert.get("status")
 
     if not status:
