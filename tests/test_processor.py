@@ -260,3 +260,5 @@ async def test_process_alerts_async_wires_hermes_context():
             assert "context_test" in payload.summary
             assert "ctx-host" in payload.summary
             assert "CURRENT STATE:" in payload.summary
+            # Verify the current incident is NOT in the history (DB was empty before insert)
+            assert "No prior incidents recorded" in payload.summary

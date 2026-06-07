@@ -104,12 +104,12 @@ async def process_alerts_async(
                 continue
 
             try:
-                # 1. Write to SQLite (sole writer)
-                db.insert_incident(alert)
-
-                # 2. Build payload and enrich with Hermes context
+                # 1. Build payload and enrich with Hermes context (query history *before* insert)
                 payload = _build_payload(alert)
                 payload.summary = build_hermes_context(payload, db)
+
+                # 2. Write to SQLite (sole writer)
+                db.insert_incident(alert)
 
                 # 3. Dispatch to notifications
                 await dispatcher.dispatch(payload)
