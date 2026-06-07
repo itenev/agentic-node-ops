@@ -45,15 +45,17 @@ def load_runbook(file_path: str | Path) -> Runbook:
     """Load a single runbook from a YAML file."""
     with open(file_path, "r") as f:
         data = yaml.safe_load(f)
-    
+
     if not data:
         raise ValueError(f"Empty or invalid runbook file: {file_path}")
-    
+
     triggers = [RunbookTrigger(**t) for t in data.get("triggers", [])]
     diagnostics = [RunbookDiagnostic(**d) for d in data.get("diagnostics", [])]
     suggested_actions = [RunbookAction(**a) for a in data.get("suggested_actions", [])]
-    privileged_actions = [RunbookAction(**a) for a in data.get("privileged_actions", [])]
-    
+    privileged_actions = [
+        RunbookAction(**a) for a in data.get("privileged_actions", [])
+    ]
+
     return Runbook(
         id=data.get("id", ""),
         triggers=triggers,
