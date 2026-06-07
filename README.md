@@ -31,7 +31,7 @@ agentic-node-ops/
 │   ├── database.py                # SQLite WAL wrapper (sole writer for incidents)
 │   ├── processor.py               # Async jsonl drain, payload build, dispatch, offset update
 │   └── runbooks.py                # YAML runbook loading and alert_type matching
-├── tests/                         # Test suite (119 tests passing, 88% coverage)
+├── tests/                         # Test suite (122 tests passing, 88% coverage)
 │   ├── test_database.py
 │   ├── test_notifications.py
 │   ├── test_processor.py
@@ -49,7 +49,7 @@ agentic-node-ops/
 |---|---|---|
 | 0 | Project scaffolding, packaging, CI/CD | ✅ Complete |
 | 1 | Webhook receiver + alert normalization + dedup + storm protection + context fetch | ✅ Complete |
-| 2 | Hermes integration + runbook matching + operator notifications | ✅ Complete (Dispatcher, Processor, Runbooks, DB) |
+| 2 | Hermes integration + runbook matching + operator notifications | 🚧 In progress (Dispatcher, Processor, Runbooks, DB implemented; Hermes agent loop, full runbooks, slashing protocol pending) |
 | 3 | Memory layer + feedback loop + host fingerprints | Design complete |
 | 4 | Tier 2 suggested actions + approval state machine + socket-proxy migration + Discord Bot API | Design complete |
 | 5 | Runbook synthesis from historical incidents | Design pending |

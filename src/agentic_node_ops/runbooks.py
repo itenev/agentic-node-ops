@@ -35,6 +35,7 @@ class RunbookDiagnostic:
     id: str
     cmd: str
     timeout: str = "5s"
+    description: str = ""
 
 
 @dataclass

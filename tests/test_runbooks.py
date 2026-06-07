@@ -2,6 +2,8 @@
 
 import os
 import tempfile
+from pathlib import Path
+
 import pytest
 
 from agentic_node_ops.runbooks import (
@@ -178,3 +180,32 @@ def test_match_runbook_severity_filtering():
     # Should NOT match when severity is low or medium
     assert match_runbook(runbooks, "alert_a", severity="low") is None
     assert match_runbook(runbooks, "alert_a", severity="medium") is None
+
+
+def test_load_actual_consensus_desync_runbook():
+    """Test that the actual consensus_desync.yaml loads without TypeError."""
+    # This test catches schema mismatches between the YAML and dataclasses
+    runbook_path = Path(__file__).parent.parent / "runbooks" / "consensus_desync.yaml"
+    assert runbook_path.exists(), f"Runbook file not found: {runbook_path}"
+
+    runbook = load_runbook(runbook_path)
+    assert runbook.id == "consensus_desync"
+    assert len(runbook.triggers) == 1
+    assert runbook.triggers[0].alert_type == "consensus_desync"
+    assert runbook.triggers[0].min_severity == "high"
+
+    # Verify diagnostics parse correctly (including the 'description' field)
+    assert len(runbook.diagnostics) == 4
+    assert runbook.diagnostics[0].id == "fetch_sync_status"
+    assert runbook.diagnostics[0].description == "Check consensus client sync status"
+
+    # Verify suggested actions
+    assert len(runbook.suggested_actions) == 1
+    assert runbook.suggested_actions[0].id == "restart_consensus_client"
+    assert runbook.suggested_actions[0].requires_approval is True
+
+    # Verify privileged actions
+    assert len(runbook.privileged_actions) == 1
+    assert runbook.privileged_actions[0].id == "restore_from_checkpoint"
+    assert runbook.privileged_actions[0].requires_explicit_unlock is True
+    assert runbook.privileged_actions[0].phase == "4_and_above_only"
