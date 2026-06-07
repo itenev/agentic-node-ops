@@ -144,6 +144,21 @@
 
 ---
 
+### Task 11b: Wire context builder into processor loop
+
+**Objective:** Replace placeholder summary in `processor.py` with actual `build_hermes_context()` output.
+
+**Files:**
+- Modify: `src/agentic_node_ops/processor.py`
+- Modify: `tests/test_processor.py`
+
+[x] Complete — Wired context assembly into the main processing loop:
+  - `processor.py`: Imports `build_hermes_context` and calls it after DB insertion to populate `payload.summary` with rich, data-driven context before dispatching.
+  - `test_processor.py`: Added `test_process_alerts_async_wires_hermes_context` to verify the summary is correctly populated.
+  - All tests passing (129 total).
+
+---
+
 ### Task 12: Implement host baseline learning
 
 **Objective:** Nightly job to compute p50/p95 baselines from Prometheus.

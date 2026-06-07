@@ -207,3 +207,56 @@ async def test_process_alerts_async_duplicate_incident():
 
             # Offset should have advanced past BOTH lines
             assert read_offset(offset_path) > 0
+
+
+@pytest.mark.asyncio
+async def test_process_alerts_async_wires_hermes_context():
+    """Test process_alerts_async calls build_hermes_context to populate summary."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        jsonl_path = os.path.join(tmpdir, "alerts.jsonl")
+        offset_path = os.path.join(tmpdir, "offset.txt")
+        db_path = os.path.join(tmpdir, "incidents.db")
+
+        alert = {
+            "id": "evt_ctx",
+            "alert_type": "context_test",
+            "severity": "medium",
+            "host": "ctx-host",
+            "fired_at": "2025-01-01T00:00:00Z",
+            "context_snapshot": {"peer_count": 5},
+        }
+
+        with open(jsonl_path, "w") as f:
+            f.write(json.dumps(alert) + "\n")
+
+        with (
+            patch("agentic_node_ops.processor.ALERTS_JSONL_PATH", jsonl_path),
+            patch("agentic_node_ops.processor.ALERT_OFFSET_PATH", offset_path),
+        ):
+            from agentic_node_ops.database import Database
+            from agentic_node_ops.dispatcher import NotificationDispatcher
+
+            mock_dispatcher = MagicMock(spec=NotificationDispatcher)
+
+            # Capture the payload passed to dispatch
+            captured_payloads = []
+
+            async def capture_dispatch(payload):
+                captured_payloads.append(payload)
+                return []
+
+            mock_dispatcher.dispatch = capture_dispatch
+
+            db = Database(db_path=db_path)
+
+            count = await process_alerts_async(db=db, dispatcher=mock_dispatcher)
+
+            assert count == 1
+            assert len(captured_payloads) == 1
+
+            payload = captured_payloads[0]
+            # Verify summary is populated by build_hermes_context, not the placeholder
+            assert payload.summary != "Alert received. Hermes analysis pending."
+            assert "context_test" in payload.summary
+            assert "ctx-host" in payload.summary
+            assert "CURRENT STATE:" in payload.summary

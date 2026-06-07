@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from .context import build_hermes_context
 from .database import Database
 from .dispatcher import NotificationDispatcher
 from .types import NotificationPayload, Severity
@@ -106,11 +107,14 @@ async def process_alerts_async(
                 # 1. Write to SQLite (sole writer)
                 db.insert_incident(alert)
 
-                # 2. Build payload and dispatch to notifications
+                # 2. Build payload and enrich with Hermes context
                 payload = _build_payload(alert)
+                payload.summary = build_hermes_context(payload, db)
+
+                # 3. Dispatch to notifications
                 await dispatcher.dispatch(payload)
 
-                # 3. Update offset AFTER successful processing
+                # 4. Update offset AFTER successful processing
                 current_offset = f.tell()
                 write_offset(ALERT_OFFSET_PATH, current_offset)
                 processed_count += 1
