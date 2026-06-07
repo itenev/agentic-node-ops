@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 from .database import Database
 
@@ -72,7 +72,7 @@ def check_timeout_escalation(
     action_id: str,
     incident_id: str,
     db: Database,
-    notify_callback: Optional[callable] = None,
+    notify_callback: Optional[Callable[..., None]] = None,
 ) -> None:
     """
     Check if an action has timed out too many times and escalate.

@@ -50,6 +50,21 @@ def test_should_propose_action_skipped(temp_db: Database):
     assert result is False
 
 
+def test_should_propose_action_suppressed(temp_db: Database):
+    """Test that a suppressed action is never re-proposed."""
+    temp_db.insert_action_proposal(
+        incident_id="incident_1",
+        action_id="action_1",
+        severity="high",
+        proposed_at=(datetime.now() - timedelta(hours=2)).isoformat(),
+    )
+    proposal_id = temp_db.get_last_proposal("action_1", "incident_1")["id"]
+    temp_db.update_proposal_outcome(proposal_id, outcome="suppressed")
+
+    result = should_propose_action("action_1", "incident_1", temp_db)
+    assert result is False
+
+
 def test_should_propose_action_within_cooldown(temp_db: Database):
     """Test that an action within cooldown is not proposed."""
     temp_db.insert_action_proposal(
@@ -173,6 +188,36 @@ def test_check_timeout_escalation(temp_db: Database):
     # Verify notification was called
     mock_notify.assert_called_once()
     assert "timed out 2 times" in mock_notify.call_args[0][0]
+
+
+def test_check_timeout_escalation_no_escalation(temp_db: Database):
+    """Test that a single timeout does NOT trigger escalation."""
+    temp_db.insert_action_proposal(
+        incident_id="incident_1",
+        action_id="action_1",
+        severity="high",
+        proposed_at=datetime.now().isoformat(),
+    )
+    last = temp_db.get_last_proposal("action_1", "incident_1")
+    temp_db.update_proposal_outcome(last["id"], "timeout")
+
+    mock_notify = MagicMock()
+    check_timeout_escalation(
+        "action_1", "incident_1", temp_db, notify_callback=mock_notify
+    )
+
+    # Should NOT have suppressed or notified
+    last = temp_db.get_last_proposal("action_1", "incident_1")
+    assert last["outcome"] == "timeout"  # unchanged
+    mock_notify.assert_not_called()
+
+
+def test_group_pending_proposals_empty(temp_db: Database):
+    """Test grouping with no pending proposals."""
+    groups = group_pending_proposals("node-1", temp_db)
+    assert len(groups) == 1
+    assert groups[0].grouped is False
+    assert len(groups[0].proposals) == 0
 
 
 def test_group_pending_proposals_single(temp_db: Database):

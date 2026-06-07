@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -206,8 +207,6 @@ class Database:
         self, incident_id: str, alert_type: str, host: str, correction: str
     ) -> None:
         """Insert an operator correction."""
-        import uuid
-
         with self._get_connection() as conn:
             conn.execute(
                 """
@@ -315,8 +314,6 @@ class Database:
         proposed_at: str,
     ) -> str:
         """Insert a new action proposal and return its ID."""
-        import uuid
-
         proposal_id = str(uuid.uuid4())
         with self._get_connection() as conn:
             conn.execute(
@@ -387,10 +384,10 @@ class Database:
                 JOIN incidents i ON ap.incident_id = i.id
                 WHERE i.host = ?
                   AND ap.outcome IS NULL
-                  AND ap.proposed_at >= datetime('now', '-' || ? || ' seconds')
+                  AND ap.proposed_at >= datetime('now', ?)
                 ORDER BY ap.proposed_at ASC
                 """,
-                (host, within_seconds),
+                (host, f"-{within_seconds} seconds"),
             )
             return [dict(row) for row in cursor.fetchall()]
 
