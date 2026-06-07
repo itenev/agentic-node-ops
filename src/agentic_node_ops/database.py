@@ -233,3 +233,58 @@ class Database:
             )
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def get_runbook_stats(self, runbook_id: str) -> dict:
+        """Get success rate and known failure cases for a runbook."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN outcome = 'resolved' THEN 1 ELSE 0 END) as resolved
+                FROM runbook_outcomes
+                WHERE runbook_id = ?
+                """,
+                (runbook_id,),
+            )
+            row = cursor.fetchone()
+            total = row["total"] or 0
+            resolved = row["resolved"] or 0
+            success_rate = resolved / total if total > 0 else 0.0
+
+            cursor = conn.execute(
+                """
+                SELECT action_taken, outcome
+                FROM runbook_outcomes
+                WHERE runbook_id = ? AND outcome != 'resolved'
+                LIMIT 3
+                """,
+                (runbook_id,),
+            )
+            failed_cases = [
+                f"{row['action_taken']} ({row['outcome']})" for row in cursor.fetchall()
+            ]
+
+            return {
+                "success_rate": success_rate,
+                "failed_cases": failed_cases if failed_cases else ["None recorded"],
+            }
+
+    def get_host_baselines(self, host: str) -> dict[str, dict]:
+        """Get all baseline p50/p95 metrics for a specific host."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT metric, baseline_p50, baseline_p95
+                FROM host_fingerprints
+                WHERE host = ?
+                """,
+                (host,),
+            )
+            return {
+                row["metric"]: {
+                    "p50": row["baseline_p50"],
+                    "p95": row["baseline_p95"],
+                }
+                for row in cursor.fetchall()
+            }

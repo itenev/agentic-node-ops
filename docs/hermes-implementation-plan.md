@@ -134,12 +134,13 @@
 **Files:**
 - Modify: `src/agentic_node_ops/database.py`
 - Create: `src/agentic_node_ops/context.py`
+- Create: `tests/test_context.py`
 
-**Steps:**
-1. Implement `get_recent_incidents()`, `get_corrections()`, runbook stats queries
-2. Implement `build_hermes_context()` from design doc §6
-3. Write tests
-4. Verify context assembly produces correct prompt text
+[x] Complete — Implemented context assembly and history queries:
+  - `database.py`: Added `get_runbook_stats()` and `get_host_baselines()` methods.
+  - `context.py`: Implemented `build_hermes_context()` combining current state, recent incidents, operator corrections, runbook performance, and host baselines into a single structured prompt.
+  - `test_context.py`: 6 tests covering DB queries and context builder formatting.
+  - All tests passing.
 
 ---
 
