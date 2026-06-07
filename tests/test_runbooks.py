@@ -84,7 +84,7 @@ def test_load_runbooks_directory():
 
 
 def test_match_runbook_found():
-    """Test match_runbook returns the correct runbook when alert_type matches."""
+    """Test match_runbook returns the correct runbook when alert_type and severity match."""
     runbooks = [
         Runbook(
             id="rb1",
@@ -96,7 +96,8 @@ def test_match_runbook_found():
         ),
     ]
 
-    matched = match_runbook(runbooks, "alert_b")
+    # Must pass severity="critical" to match the trigger's min_severity
+    matched = match_runbook(runbooks, "alert_b", severity="critical")
     assert matched is not None
     assert matched.id == "rb2"
 
@@ -129,3 +130,51 @@ def test_match_runbook_multiple_triggers():
     matched = match_runbook(runbooks, "alert_c")
     assert matched is not None
     assert matched.id == "rb1"
+
+
+def test_load_runbook_with_privileged_actions():
+    """Test load_runbook successfully parses privileged_actions with extra fields."""
+    yaml_content = """
+id: test_privileged
+privileged_actions:
+  - id: wipe_state
+    description: "Wipe state"
+    cmd: "rm -rf /data"
+    risk: high
+    reversible: false
+    requires_approval: true
+    requires_explicit_unlock: true
+    phase: "4_and_above_only"
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        path = f.name
+
+    try:
+        runbook = load_runbook(path)
+        assert runbook.id == "test_privileged"
+        assert len(runbook.privileged_actions) == 1
+        action = runbook.privileged_actions[0]
+        assert action.id == "wipe_state"
+        assert action.requires_explicit_unlock is True
+        assert action.phase == "4_and_above_only"
+    finally:
+        os.unlink(path)
+
+
+def test_match_runbook_severity_filtering():
+    """Test match_runbook correctly filters by min_severity."""
+    runbooks = [
+        Runbook(
+            id="rb_high_only",
+            triggers=[RunbookTrigger(alert_type="alert_a", min_severity="high")],
+        ),
+    ]
+
+    # Should match when severity is high or critical
+    assert match_runbook(runbooks, "alert_a", severity="high") is not None
+    assert match_runbook(runbooks, "alert_a", severity="critical") is not None
+
+    # Should NOT match when severity is low or medium
+    assert match_runbook(runbooks, "alert_a", severity="low") is None
+    assert match_runbook(runbooks, "alert_a", severity="medium") is None

@@ -1,10 +1,13 @@
 """Runbook loading and matching utilities."""
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,6 +26,8 @@ class RunbookAction:
     requires_approval: bool
     approval_timeout: str = "30m"
     pre_conditions: list[str] = field(default_factory=list)
+    requires_explicit_unlock: bool = False
+    phase: str | None = None
 
 
 @dataclass
@@ -72,15 +77,30 @@ def load_runbooks(directory: str | Path) -> list[Runbook]:
     for file_path in dir_path.glob("*.yaml"):
         try:
             runbooks.append(load_runbook(file_path))
-        except Exception:
-            continue
+        except Exception as e:
+            log.warning("Failed to load runbook %s: %s", file_path, e)
     return runbooks
 
 
-def match_runbook(runbooks: list[Runbook], alert_type: str) -> Optional[Runbook]:
-    """Return the matching runbook based on alert_type, or None if not found."""
+SEVERITY_LEVELS = ["low", "medium", "high", "critical"]
+
+
+def match_runbook(
+    runbooks: list[Runbook], alert_type: str, severity: str = "low"
+) -> Optional[Runbook]:
+    """Return the matching runbook based on alert_type and severity, or None if not found."""
+    alert_severity_idx = (
+        SEVERITY_LEVELS.index(severity) if severity in SEVERITY_LEVELS else 0
+    )
+
     for runbook in runbooks:
         for trigger in runbook.triggers:
             if trigger.alert_type == alert_type:
-                return runbook
+                min_sev_idx = (
+                    SEVERITY_LEVELS.index(trigger.min_severity)
+                    if trigger.min_severity in SEVERITY_LEVELS
+                    else 0
+                )
+                if alert_severity_idx >= min_sev_idx:
+                    return runbook
     return None
