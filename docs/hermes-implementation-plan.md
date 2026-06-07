@@ -114,14 +114,14 @@
 
 **Files:**
 - Create: `src/agentic_node_ops/runbooks.py`
-- Create: `runbooks/consensus_desync.yaml` (first real runbook)
+- Create: `tests/test_runbooks.py`
+- Existing: `runbooks/consensus_desync.yaml`
 
-**Steps:**
-1. Implement runbook loader (YAML parsing)
-2. Implement matcher (alert_type → runbook)
-3. Create first runbook: consensus_desync
-4. Write tests
-5. Verify matching produces correct runbook_id in payload
+[x] Complete — Implemented runbook loader and matcher:
+  - `runbooks.py`: YAML parsing with dataclasses (`Runbook`, `RunbookTrigger`, `RunbookAction`, `RunbookDiagnostic`) and `match_runbook()` function.
+  - `test_runbooks.py`: 6 tests covering loading (valid, empty, directory) and matching (found, not found, multiple triggers).
+  - Webhook receiver already sets `runbook_hint=alert_type`, which correctly maps to the runbook ID.
+  - All tests passing.
 
 ---
 
