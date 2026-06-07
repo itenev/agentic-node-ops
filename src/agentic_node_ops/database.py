@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -206,8 +207,6 @@ class Database:
         self, incident_id: str, alert_type: str, host: str, correction: str
     ) -> None:
         """Insert an operator correction."""
-        import uuid
-
         with self._get_connection() as conn:
             conn.execute(
                 """
@@ -304,5 +303,105 @@ class Database:
                     last_updated = CURRENT_TIMESTAMP
                 """,
                 (host, metric, p50, p95),
+            )
+            conn.commit()
+
+    def insert_action_proposal(
+        self,
+        incident_id: str,
+        action_id: str,
+        severity: str,
+        proposed_at: str,
+    ) -> str:
+        """Insert a new action proposal and return its ID."""
+        proposal_id = str(uuid.uuid4())
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO action_proposals (id, incident_id, action_id, severity, proposed_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (proposal_id, incident_id, action_id, severity, proposed_at),
+            )
+            conn.commit()
+        return proposal_id
+
+    def get_last_proposal(self, action_id: str, incident_id: str) -> Optional[dict]:
+        """Get the most recent proposal for a specific action and incident."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, action_id, severity, proposed_at, outcome, resolved_at
+                FROM action_proposals
+                WHERE action_id = ? AND incident_id = ?
+                ORDER BY proposed_at DESC
+                LIMIT 1
+                """,
+                (action_id, incident_id),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def count_timeouts(self, action_id: str, incident_id: str) -> int:
+        """Count the number of timeout outcomes for a specific action and incident."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT COUNT(*) as count
+                FROM action_proposals
+                WHERE action_id = ? AND incident_id = ? AND outcome = 'timeout'
+                """,
+                (action_id, incident_id),
+            )
+            row = cursor.fetchone()
+            return row["count"] if row else 0
+
+    def mark_action_suppressed(self, action_id: str, incident_id: str) -> None:
+        """Mark the most recent action proposal as suppressed for a specific incident."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE action_proposals
+                SET outcome = 'suppressed'
+                WHERE id = (
+                    SELECT id FROM action_proposals
+                    WHERE action_id = ? AND incident_id = ?
+                    ORDER BY proposed_at DESC
+                    LIMIT 1
+                )
+                """,
+                (action_id, incident_id),
+            )
+            conn.commit()
+
+    def get_pending_proposals(self, host: str, within_seconds: int = 300) -> list[dict]:
+        """Get pending (outcome IS NULL) proposals for a host within a time window."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT ap.id, ap.incident_id, ap.action_id, ap.severity, ap.proposed_at, i.host
+                FROM action_proposals ap
+                JOIN incidents i ON ap.incident_id = i.id
+                WHERE i.host = ?
+                  AND ap.outcome IS NULL
+                  AND ap.proposed_at >= datetime('now', ?)
+                ORDER BY ap.proposed_at ASC
+                """,
+                (host, f"-{within_seconds} seconds"),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_proposal_outcome(
+        self, proposal_id: str, outcome: str, resolved_at: Optional[str] = None
+    ) -> None:
+        """Update the outcome of an action proposal."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE action_proposals
+                SET outcome = ?, resolved_at = COALESCE(?, resolved_at)
+                WHERE id = ?
+                """,
+                (outcome, resolved_at, proposal_id),
             )
             conn.commit()

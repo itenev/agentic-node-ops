@@ -180,8 +180,18 @@
 
 ### Task 13: Implement approval state machine
 
+**Objective:** Implement approval state machine and fatigue prevention for action proposals.
+
 **Files:**
 - Create: `src/agentic_node_ops/approval.py`
+- Modify: `src/agentic_node_ops/database.py`
+- Create: `tests/test_approval.py`
+
+[x] Complete — Implemented approval state machine:
+  - `database.py`: Added `insert_action_proposal`, `get_last_proposal`, `count_timeouts`, `mark_action_suppressed`, `get_pending_proposals`, and `update_proposal_outcome`.
+  - `approval.py`: Implemented `should_propose_action` (cooldown/skip checks), `check_timeout_escalation`, `group_pending_proposals`, `propose_action`, and `resolve_proposal`.
+  - `test_approval.py`: 12 tests covering fatigue rules, escalation, and proposal grouping.
+  - All tests passing (148 total, 90% coverage).
 
 ---
 
