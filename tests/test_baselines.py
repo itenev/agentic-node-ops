@@ -1,12 +1,17 @@
 """Tests for baselines module."""
 
+import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agentic_node_ops.baselines import compute_percentiles, update_host_baselines
+from agentic_node_ops.baselines import (
+    _query_prometheus_range,
+    compute_percentiles,
+    update_host_baselines,
+)
 from agentic_node_ops.database import Database
 
 
@@ -40,6 +45,31 @@ def test_compute_percentiles_odd_count():
     p50, p95 = compute_percentiles(values)
     assert p50 == 30.0
     assert p95 == 50.0  # index 4 (5 * 0.95 = 4.75 -> int is 4)
+
+
+@patch("urllib.request.urlopen")
+def test_query_prometheus_range_parses_matrix_response(mock_urlopen):
+    """Test that _query_prometheus_range correctly parses 'values' (plural) from matrix response."""
+    mock_response = {
+        "status": "success",
+        "data": {
+            "resultType": "matrix",
+            "result": [
+                {
+                    "metric": {"host": "node-1"},
+                    "values": [[1695000000, "50.0"], [1695003600, "60.0"]],
+                }
+            ],
+        },
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(mock_response).encode("utf-8")
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_urlopen.return_value = mock_resp
+
+    result = _query_prometheus_range("test_metric", "now-24h", "now")
+    assert result == [50.0, 60.0]
 
 
 @pytest.fixture

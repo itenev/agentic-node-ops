@@ -36,10 +36,12 @@ def _query_prometheus_range(
             result = data.get("data", {}).get("result", [])
             values = []
             for series in result:
-                for point in series.get("value", []):
-                    # point is [timestamp, value_str]
+                for point in series.get("values", []):
                     if len(point) == 2:
-                        values.append(float(point[1]))
+                        try:
+                            values.append(float(point[1]))
+                        except (ValueError, TypeError):
+                            pass
             return values
     except (
         urllib.error.URLError,
