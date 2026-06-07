@@ -20,7 +20,7 @@ def build_hermes_context(payload: NotificationPayload, db: Database) -> str:
     if recent_incidents:
         incidents_text = "\n".join(
             f"- {inc['fired_at']}: {inc['outcome'] or 'unresolved'} "
-            f"(severity: {inc['severity']}, analysis: {inc.get('hermes_analysis', 'N/A')[:100]})"
+            f"(severity: {inc['severity']}, analysis: {(inc.get('hermes_analysis') or 'N/A')[:100]}{'...' if len(inc.get('hermes_analysis') or '') > 100 else ''})"
             for inc in recent_incidents
         )
     else:
