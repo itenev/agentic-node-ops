@@ -21,17 +21,25 @@ Design docs: [docs/](docs/) (architecture, webhook spec, runbook spec, notificat
 
 ```
 agentic-node-ops/
-├── docs/                          # Design specs (index in hermes-agent-design-final.md)
-├── src/agentic_node_ops/          # Python source (Phase 2 — notifications)
+├── docs/                          # Design specs (architecture, webhook, runbooks, etc.)
+├── src/agentic_node_ops/          # Python source (Hermes integration & notifications)
 │   ├── __init__.py
 │   ├── types.py                   # Alert schemas, data models
 │   ├── dispatcher.py              # Alert routing and processing
 │   ├── discord.py                 # Discord notification adapter
-│   └── ntfy.py                    # ntfy.sh notification adapter
-├── tests/                         # Test suite (30 tests passing)
-│   └── test_notifications.py
-├── runbooks/                      # YAML runbooks (Phase 2+)
-├── webhook-receiver/              # Standalone HTTP receiver (Phase 1 — in progress)
+│   ├── ntfy.py                    # ntfy.sh notification adapter
+│   ├── database.py                # SQLite WAL wrapper (sole writer for incidents)
+│   ├── processor.py               # Async jsonl drain, payload build, dispatch, offset update
+│   └── runbooks.py                # YAML runbook loading and alert_type matching
+├── tests/                         # Test suite (122 tests passing, 88% coverage)
+│   ├── test_database.py
+│   ├── test_notifications.py
+│   ├── test_processor.py
+│   └── test_runbooks.py
+├── runbooks/                      # YAML runbooks (e.g., consensus_desync.yaml)
+├── webhook-receiver/              # Standalone HTTP receiver (Phase 1 complete)
+│   ├── src/webhook_receiver/      # aiohttp server, schema validation, dedup, storm protection
+│   └── tests/                     # Webhook receiver test suite
 └── .gitignore
 ```
 
@@ -40,8 +48,8 @@ agentic-node-ops/
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Project scaffolding, packaging, CI/CD | ✅ Complete |
-| 1 | Webhook receiver + alert normalization + jsonl queue | 🚧 In progress |
-| 2 | Hermes integration + runbook matching + operator notifications | 🚧 Notifications implemented ✅, rest pending |
+| 1 | Webhook receiver + alert normalization + dedup + storm protection + context fetch | ✅ Complete |
+| 2 | Hermes integration + runbook matching + operator notifications | 🚧 In progress (Dispatcher, Processor, Runbooks, DB implemented; Hermes agent loop, full runbooks, slashing protocol pending) |
 | 3 | Memory layer + feedback loop + host fingerprints | Design complete |
 | 4 | Tier 2 suggested actions + approval state machine + socket-proxy migration + Discord Bot API | Design complete |
 | 5 | Runbook synthesis from historical incidents | Design pending |
