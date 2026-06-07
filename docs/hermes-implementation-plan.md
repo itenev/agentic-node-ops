@@ -165,13 +165,14 @@
 
 **Files:**
 - Create: `src/agentic_node_ops/baselines.py`
+- Modify: `src/agentic_node_ops/database.py`
+- Create: `tests/test_baselines.py`
 
-**Steps:**
-1. Implement Prometheus `/api/v1/query_range` poller
-2. Compute p50/p95 per metric per host
-3. Store in `host_fingerprints` table
-4. Write tests
-5. Verify baselines are computed and stored
+[x] Complete — Implemented host baseline learning:
+  - `database.py`: Added `upsert_host_baseline` method for atomic insert/update of baseline metrics.
+  - `baselines.py`: Implemented `_query_prometheus_range` poller, `compute_percentiles` (p50/p95), and `update_host_baselines` orchestrator.
+  - `test_baselines.py`: 6 tests covering percentile math (empty, single, even, odd) and DB upsert integration.
+  - All tests passing (135 total).
 
 ---
 

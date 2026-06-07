@@ -288,3 +288,21 @@ class Database:
                 }
                 for row in cursor.fetchall()
             }
+
+    def upsert_host_baseline(
+        self, host: str, metric: str, p50: float, p95: float
+    ) -> None:
+        """Insert or update a host baseline metric."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO host_fingerprints (host, metric, baseline_p50, baseline_p95, last_updated)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(host, metric) DO UPDATE SET
+                    baseline_p50 = excluded.baseline_p50,
+                    baseline_p95 = excluded.baseline_p95,
+                    last_updated = CURRENT_TIMESTAMP
+                """,
+                (host, metric, p50, p95),
+            )
+            conn.commit()
