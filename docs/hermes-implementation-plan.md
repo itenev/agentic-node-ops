@@ -197,8 +197,16 @@
 
 ### Task 14: Implement runbook executor
 
+**Objective:** Execute diagnostics and actions defined in runbooks.
+
 **Files:**
 - Create: `src/agentic_node_ops/executor.py`
+- Create: `tests/test_executor.py`
+
+[x] Complete — Implemented runbook executor:
+  - `executor.py`: Added `execute_command` (with timeout handling), `run_diagnostics` (TIER 1: always run), and `execute_action` (TIER 2/3: blocks privileged actions requiring explicit unlock).
+  - `test_executor.py`: 6 tests covering command success/failure/timeout, diagnostics execution, and privileged action blocking.
+  - All tests passing (157 total, 90% coverage).
 
 ---
 
