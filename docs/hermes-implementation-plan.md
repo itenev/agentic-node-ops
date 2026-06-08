@@ -212,9 +212,15 @@
 
 ### Task 15: Implement nginx socket-proxy migration
 
+**Objective:** Migrate to fine-grained Docker API filtering for Phase 4 runbook execution.
+
 **Files:**
 - Create: `webhook-receiver/nginx-docker-filter.conf`
-- Modify: compose config for Phase 4
+- Create: `docker-compose.yml` (Phase 4 configuration)
+
+[x] Complete — Implemented nginx socket-proxy migration:
+  - `webhook-receiver/nginx-docker-filter.conf`: nginx configuration using `map` to allowlist only `GET` requests and `POST /containers/{name}/restart`, blocking all other mutations.
+  - `docker-compose.yml`: Full Phase 4 compose configuration wiring `hermes-docker-proxy` (nginx) in front of `docker-socket-proxy`, with `DOCKER_HOST` updated for both `webhook-receiver` and `hermes-agent`.
 
 ---
 

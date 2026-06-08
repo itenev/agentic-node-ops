@@ -1,0 +1,80 @@
+# docker-compose.yml
+# Phase 4: Hermes Agent + Webhook Receiver with nginx socket-proxy migration
+# 
+# This configuration implements the socket-proxy pattern with fine-grained
+# path-level filtering via nginx, allowing safe container restarts while
+# blocking all other mutations.
+
+services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      CONTAINERS: 1
+      IMAGES: 0
+      NETWORKS: 0
+      SECRETS: 0
+      POST: 0         # Base proxy blocks all POSTs; nginx handles fine-grained allowlisting
+    networks:
+      - hermes-monitoring
+    restart: unless-stopped
+
+  hermes-docker-proxy:
+    image: nginx:alpine
+    volumes:
+      - ./webhook-receiver/nginx-docker-filter.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - hermes-monitoring
+    depends_on:
+      - docker-socket-proxy
+    restart: unless-stopped
+
+  webhook-receiver:
+    build: ./webhook-receiver
+    volumes:
+      - hermes-data:/var/hermes
+    environment:
+      - ALERT_QUEUE_PATH=/var/hermes/alerts.jsonl
+      - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
+      - PROMETHEUS_URL=http://prometheus:9090
+      - DOCKER_HOST=tcp://hermes-docker-proxy:2376
+    networks:
+      - hermes-monitoring
+      - ethd_default
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    restart: unless-stopped
+
+  hermes-agent:
+    build: .
+    environment:
+      - DOCKER_HOST=tcp://hermes-docker-proxy:2376
+      - PROMETHEUS_URL=http://prometheus:9090
+      - LOKI_URL=http://loki:3100
+      - BEACON_URL=http://consensus:5052
+      - ALERT_QUEUE_PATH=/var/hermes/alerts.jsonl
+      - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - NTFY_TOPIC=${NTFY_TOPIC}
+    volumes:
+      - ./runbooks:/runbooks:ro
+      - hermes-data:/var/hermes
+    networks:
+      - hermes-monitoring
+      - ethd_default
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+      webhook-receiver:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  hermes-data:
+
+networks:
+  hermes-monitoring:
+  ethd_default:
+    external: true
