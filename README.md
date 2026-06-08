@@ -30,17 +30,25 @@ agentic-node-ops/
 │   ├── ntfy.py                    # ntfy.sh notification adapter
 │   ├── database.py                # SQLite WAL wrapper (sole writer for incidents)
 │   ├── processor.py               # Async jsonl drain, payload build, dispatch, offset update
-│   └── runbooks.py                # YAML runbook loading and alert_type matching
-├── tests/                         # Test suite (122 tests passing, 88% coverage)
+│   ├── runbooks.py                # YAML runbook loading and alert_type matching
+│   ├── context.py                 # Hermes context assembly (incidents, corrections, baselines)
+│   ├── baselines.py               # Nightly host baseline learning (p50/p95 percentiles)
+│   ├── approval.py                # Approval state machine and fatigue prevention
+│   └── executor.py                # Runbook diagnostics and action execution
+├── tests/                         # Test suite (161 tests passing, 90% coverage)
 │   ├── test_database.py
 │   ├── test_notifications.py
 │   ├── test_processor.py
-│   └── test_runbooks.py
+│   ├── test_runbooks.py
+│   ├── test_context.py
+│   ├── test_baselines.py
+│   ├── test_approval.py
+│   └── test_executor.py
 ├── runbooks/                      # YAML runbooks (e.g., consensus_desync.yaml)
 ├── webhook-receiver/              # Standalone HTTP receiver (Phase 1 complete)
-│   ├── src/webhook_receiver/      # aiohttp server, schema validation, dedup, storm protection
+│   ├── src/webhook_receiver/      # aiohttp server, schema validation, dedup, storm protection, context fetch
 │   └── tests/                     # Webhook receiver test suite
-└── .gitignore
+└── docker-compose.yml             # Phase 4 deployment config with nginx socket-proxy
 ```
 
 ## Status
@@ -49,9 +57,9 @@ agentic-node-ops/
 |---|---|---|
 | 0 | Project scaffolding, packaging, CI/CD | ✅ Complete |
 | 1 | Webhook receiver + alert normalization + dedup + storm protection + context fetch | ✅ Complete |
-| 2 | Hermes integration + runbook matching + operator notifications | 🚧 In progress (Dispatcher, Processor, Runbooks, DB implemented; Hermes agent loop, full runbooks, slashing protocol pending) |
-| 3 | Memory layer + feedback loop + host fingerprints | Design complete |
-| 4 | Tier 2 suggested actions + approval state machine + socket-proxy migration + Discord Bot API | Design complete |
+| 2 | Hermes integration + runbook matching + operator notifications | ✅ Complete |
+| 3 | Memory layer + feedback loop + host fingerprints + context assembly | ✅ Complete |
+| 4 | Tier 2 suggested actions + approval state machine + runbook executor + nginx socket-proxy migration | ✅ Complete |
 | 5 | Runbook synthesis from historical incidents | Design pending |
 | 6 | Semi-autonomous remediation with confidence scoring | Future |
 
