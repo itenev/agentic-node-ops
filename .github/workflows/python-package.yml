@@ -15,6 +15,11 @@ concurrency:
 permissions:
   contents: read
 
+# Opt into Node.js 24 for JavaScript actions to prevent deprecation warnings
+# and ensure compatibility when GitHub switches the default on June 16th, 2026.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
