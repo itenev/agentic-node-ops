@@ -15,7 +15,7 @@ services:
       IMAGES: 0
       NETWORKS: 0
       SECRETS: 0
-      POST: 0         # Base proxy blocks all POSTs; nginx handles fine-grained allowlisting
+      POST: 1         # Nginx handles fine-grained path-level filtering for POSTs
     networks:
       - hermes-monitoring
     restart: unless-stopped
@@ -45,6 +45,8 @@ services:
     depends_on:
       docker-socket-proxy:
         condition: service_started
+      hermes-docker-proxy:
+        condition: service_started
     restart: unless-stopped
 
   hermes-agent:
@@ -66,6 +68,8 @@ services:
       - ethd_default
     depends_on:
       docker-socket-proxy:
+        condition: service_started
+      hermes-docker-proxy:
         condition: service_started
       webhook-receiver:
         condition: service_started
