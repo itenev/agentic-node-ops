@@ -28,6 +28,7 @@ class RunbookAction:
     pre_conditions: list[str] = field(default_factory=list)
     requires_explicit_unlock: bool = False
     phase: str | None = None
+    shell_required: bool = False
 
 
 @dataclass
