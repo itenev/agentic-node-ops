@@ -75,7 +75,17 @@ def execute_command(
                 os.killpg(proc.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass  # Process already terminated
-            proc.wait()
+
+            # Wait for graceful termination, fallback to SIGKILL if ignored
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                except ProcessLookupError:
+                    pass
+
             log.error("Command timed out after %ds: %s", timeout, cmd)
             return {
                 "success": False,
