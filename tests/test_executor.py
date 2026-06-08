@@ -1,7 +1,12 @@
 """Tests for runbook executor."""
 
 import time
-from agentic_node_ops.executor import execute_command, run_diagnostics, execute_action, _parse_timeout
+from agentic_node_ops.executor import (
+    execute_command,
+    run_diagnostics,
+    execute_action,
+    _parse_timeout,
+)
 from agentic_node_ops.runbooks import Runbook, RunbookDiagnostic, RunbookAction
 
 
@@ -28,7 +33,7 @@ def test_execute_command_timeout_kills_process():
     start = time.time()
     result = execute_command("sleep 5", timeout=1)
     elapsed = time.time() - start
-    
+
     assert result["success"] is False
     assert "timed out" in result["stderr"].lower()
     assert result["returncode"] == -1
@@ -47,7 +52,9 @@ def test_execute_command_shell_required():
 def test_execute_command_shell_false_blocks_metacharacters():
     """Test shell=False treats metacharacters as literal arguments."""
     # This will fail because '&&' is passed as a literal argument, not as a shell operator
-    result2 = execute_command("ls /nonexistent_dir_12345 && echo 'should not run'", shell_required=False)
+    result2 = execute_command(
+        "ls /nonexistent_dir_12345 && echo 'should not run'", shell_required=False
+    )
     assert result2["success"] is False
     assert "No such file or directory" in result2["stderr"]
 
@@ -57,17 +64,19 @@ def test_run_diagnostics():
     runbook = Runbook(
         id="test_runbook",
         diagnostics=[
-            RunbookDiagnostic(id="diag1", cmd="echo 'diag1'", timeout="1s", description="Test diag"),
+            RunbookDiagnostic(
+                id="diag1", cmd="echo 'diag1'", timeout="1s", description="Test diag"
+            ),
             RunbookDiagnostic(id="diag2", cmd="exit 1", timeout="1s"),
-        ]
+        ],
     )
     results = run_diagnostics(runbook)
-    
+
     assert len(results) == 2
     assert results[0]["id"] == "diag1"
     assert results[0]["success"] is True
     assert results[0]["stdout"] == "diag1"
-    
+
     assert results[1]["id"] == "diag2"
     assert results[1]["success"] is False
 
@@ -83,7 +92,7 @@ def test_execute_action_success():
         requires_approval=True,
     )
     result = execute_action(action)
-    
+
     assert result["success"] is True
     assert result["stdout"] == "action1"
     assert result["id"] == "action1"
@@ -101,7 +110,7 @@ def test_execute_action_privileged_blocked():
         requires_explicit_unlock=True,
     )
     result = execute_action(action)
-    
+
     assert result["success"] is False
     assert "requires explicit unlock" in result["stderr"]
     assert result["returncode"] == -1
