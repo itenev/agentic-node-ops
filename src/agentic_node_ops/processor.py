@@ -201,13 +201,13 @@ def run_processor_loop(
         poll_interval: Seconds to wait between polling cycles when queue is empty
     """
     log.info("Starting alert processor loop (poll interval: %ss)", poll_interval)
-    
+
     # Start Prometheus metrics server and set initial heartbeat
     _start_metrics_server()
     HERMES_ALIVE.set(1)
-    
+
     asyncio.run(_run_loop_async(db, dispatcher, poll_interval))
-    
+
     # Clear heartbeat on shutdown
     HERMES_ALIVE.set(0)
 
