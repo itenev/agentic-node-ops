@@ -34,7 +34,7 @@
 
 ### Task 4: Split design doc into focused documents
 
-[x] Complete — Split 945-line `hermes-agent-design-final.md` into index (80 lines) + 6 focused documents: `architecture.md`, `webhook-receiver-spec.md`, `slashing-protocol.md`, `runbook-spec.md`, `memory-and-feedback.md`, `alert-set.md`, `notification-design.md`. Updated all cross-references in README and runbooks README.
+[x] Complete — Split 945-line monolithic design doc into `docs/index.md` (Table of Contents) + 6 focused documents: `architecture.md`, `webhook-receiver-spec.md`, `slashing-protocol.md`, `runbook-spec.md`, `memory-and-feedback.md`, `alert-set.md`, `notification-design.md`. Updated all cross-references in README and runbooks README.
 
 ---
 
