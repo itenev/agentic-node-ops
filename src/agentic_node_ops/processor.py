@@ -13,6 +13,8 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from prometheus_client import Gauge, start_http_server
+
 from .context import build_hermes_context
 from .database import Database
 from .dispatcher import NotificationDispatcher
@@ -24,6 +26,19 @@ ALERTS_JSONL_PATH = os.environ.get("ALERTS_JSONL_PATH", "/var/hermes/alerts.json
 ALERT_OFFSET_PATH = os.environ.get(
     "ALERT_OFFSET_PATH", "/var/hermes/alerts.jsonl.offset"
 )
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "8091"))
+
+# Prometheus metrics
+HERMES_ALIVE = Gauge("hermes_alive", "Hermes agent heartbeat (1 = alive, 0 = silent)")
+
+
+def _start_metrics_server() -> None:
+    """Start Prometheus metrics HTTP server in a background thread."""
+    try:
+        start_http_server(METRICS_PORT)
+        log.info("Prometheus metrics server started on port %d", METRICS_PORT)
+    except Exception as e:
+        log.error("Failed to start metrics server: %s", e)
 
 
 def read_offset(path: str) -> int:
@@ -186,4 +201,22 @@ def run_processor_loop(
         poll_interval: Seconds to wait between polling cycles when queue is empty
     """
     log.info("Starting alert processor loop (poll interval: %ss)", poll_interval)
+
+    # Start Prometheus metrics server
+    _start_metrics_server()
+
+    # Set initial heartbeat
+    HERMES_ALIVE.set(1)
+
     asyncio.run(_run_loop_async(db, dispatcher, poll_interval))
+
+    # Clear heartbeat on shutdown
+    HERMES_ALIVE.set(0)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    run_processor_loop()

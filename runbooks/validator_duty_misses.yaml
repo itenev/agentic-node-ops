@@ -1,0 +1,32 @@
+id: validator_duty_misses
+description: Validator is missing attestation or proposal duties.
+trigger:
+  alert_type: validator_duty_misses
+diagnostics:
+  - id: check_validator_status
+    cmd: "curl -s http://validator:5042/eth/v1/validator/status"
+    description: "Check validator client status and connected consensus client"
+    timeout: 5s
+  - id: check_consensus_sync
+    cmd: "curl -s http://consensus:5052/eth/v1/node/syncing"
+    description: "Verify consensus client is fully synced"
+    timeout: 5s
+  - id: check_docker_logs
+    cmd: "docker logs validator --tail 50"
+    description: "Check recent validator client logs for errors"
+    timeout: 10s
+actions:
+  - id: restart_validator
+    description: "Restart the validator client to reconnect to consensus"
+    cmd: "docker restart validator"
+    risk: low
+    reversible: true
+    requires_approval: true
+    approval_timeout: 15m
+  - id: restart_consensus
+    description: "Restart consensus client if validator is healthy but consensus is stuck"
+    cmd: "docker restart consensus"
+    risk: medium
+    reversible: true
+    requires_approval: true
+    approval_timeout: 15m

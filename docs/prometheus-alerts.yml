@@ -1,0 +1,25 @@
+groups:
+  - name: hermes-self-monitoring
+    rules:
+      # Hermes Agent Silent
+      # Fires if the hermes_alive metric is absent (process crashed) or 0 (shut down) for 2 minutes.
+      - alert: HermesAgentSilent
+        expr: absent(hermes_alive) or hermes_alive == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Hermes agent not responding — alerts may be missed"
+          description: "The Hermes agent heartbeat metric is absent or zero. Check the hermes-agent container logs."
+
+      # Webhook Receiver Down
+      # Fires if the webhook_receiver_up metric is absent or 0 for 30 seconds.
+      # Note: webhook-receiver should expose this metric (e.g., via prometheus-client or textfile).
+      - alert: WebhookReceiverDown
+        expr: absent(webhook_receiver_up) or webhook_receiver_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager webhook receiver is down"
+          description: "The webhook receiver is not responding. Alerts will be queued in jsonl but not processed until it recovers."
