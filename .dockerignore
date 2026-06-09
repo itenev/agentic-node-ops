@@ -1,0 +1,23 @@
+# Git
+.git/
+.gitignore
+
+# Documentation and tests (not needed in production image)
+docs/
+tests/
+*.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Hermes specific
+*.jsonl
+*.jsonl.offset

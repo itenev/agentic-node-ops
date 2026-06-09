@@ -187,3 +187,7 @@ def run_processor_loop(
     """
     log.info("Starting alert processor loop (poll interval: %ss)", poll_interval)
     asyncio.run(_run_loop_async(db, dispatcher, poll_interval))
+
+
+if __name__ == "__main__":
+    run_processor_loop()
