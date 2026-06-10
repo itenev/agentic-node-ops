@@ -1,0 +1,31 @@
+# Alertmanager Routing Configuration for Hermes
+#
+# Add this to your eth-docker Alertmanager configuration (e.g., alertmanager/config.yml)
+# to route all alerts to the Hermes webhook receiver for normalization and reasoning.
+
+route:
+  # Default receiver for all alerts
+  receiver: 'hermes-webhook'
+  
+  # Optional: Group alerts to reduce notification spam
+  # Note: eth-docker uses 'instance' or 'job' labels, not 'host'
+  group_by: ['alertname', 'instance']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: 'hermes-webhook'
+    webhook_configs:
+      # Adjust the URL if webhook-receiver is deployed on a different host/port
+      - url: 'http://webhook-receiver:8090/webhook'
+        send_resolved: true
+        # Optional: Add basic auth or headers if your webhook receiver requires it
+        # http_config:
+        #   basic_auth:
+        #     username: 'hermes'
+        #     password: 'your-secret'
+
+# Global settings (ensure these match your existing Alertmanager config)
+global:
+  resolve_timeout: 5m
