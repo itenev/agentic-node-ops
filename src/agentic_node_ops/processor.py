@@ -178,7 +178,7 @@ async def _run_loop_async(
         try:
             # Periodic heartbeat to prove event loop is alive and not deadlocked
             HERMES_ALIVE.set(1)
-            
+
             count = await process_alerts_async(db=db, dispatcher=dispatcher)
             if count == 0:
                 await asyncio.sleep(poll_interval)
