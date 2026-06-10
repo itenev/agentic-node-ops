@@ -6,19 +6,13 @@
 route:
   # Default receiver for all alerts
   receiver: 'hermes-webhook'
-
+  
   # Optional: Group alerts to reduce notification spam
-  group_by: ['alertname', 'host']
+  # Note: eth-docker uses 'instance' or 'job' labels, not 'host'
+  group_by: ['alertname', 'instance']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
-
-  routes:
-    # Route all alerts to Hermes.
-    # You can add specific matchers here if you only want certain alerts processed.
-    - matchers:
-        - alertname=~".+"
-      receiver: 'hermes-webhook'
 
 receivers:
   - name: 'hermes-webhook'

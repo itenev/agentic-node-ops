@@ -15,15 +15,15 @@ NTFY_TOPIC="https://ntfy.sh/your-secret-topic"
 ```
 
 ### 1.2 Verify Alertmanager Routing
-Add the following route to your `eth-docker` Alertmanager configuration (`alertmanager/config.yml`) to ensure alerts are routed to the webhook receiver:
+Add the following route to your `eth-docker` Alertmanager configuration (`alertmanager/config.yml`) to ensure alerts are routed to the webhook receiver. (See `docs/alertmanager-hermes-routing.yml` for the full configuration).
 
 ```yaml
 route:
   receiver: 'hermes-webhook'
-  routes:
-    - matchers:
-        - alertname=~".+"
-      receiver: 'hermes-webhook'
+  group_by: ['alertname', 'instance']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
 
 receivers:
   - name: 'hermes-webhook'
@@ -67,12 +67,25 @@ curl http://localhost:8091/metrics | grep hermes_alive
 ### Scenario A: Basic Alert Processing & Notification (Tier 1)
 **Goal:** Verify alert ingestion, context assembly, and two-tier notification.
 
-1. **Trigger:** Manually fire a test alert via Alertmanager or Prometheus:
-   ```yaml
-   # In Prometheus UI -> Alerting -> Rules, or via alertmanager API
-   alertname: "TestConsensusDesync"
-   severity: "high"
-   host: "test-host"
+1. **Trigger:** Manually fire a test alert directly to the webhook receiver (isolates the pipeline from Alertmanager configuration):
+   ```bash
+   curl -X POST http://localhost:8090/webhook \
+     -H "Content-Type: application/json" \
+     -d '{
+       "receiver": "hermes-webhook",
+       "status": "firing",
+       "alerts": [{
+         "status": "firing",
+         "labels": {
+           "alertname": "ConsensusDesync",
+           "severity": "high",
+           "instance": "test-host"
+         },
+         "annotations": {"summary": "Test alert"},
+         "startsAt": "2025-01-01T00:00:00Z",
+         "fingerprint": "test-001"
+       }]
+     }'
    ```
 2. **Validate Webhook Receiver:**
    ```bash
@@ -109,28 +122,34 @@ curl http://localhost:8091/metrics | grep hermes_alive
 
 1. **Trigger:** Fire an alert that matches a runbook with `requires_approval: true` (e.g., `client_crash`).
 2. **Validate Proposal:** Check `hermes-agent` logs for `Proposing action`.
-3. **Validate Database:** Inspect the SQLite DB for the pending proposal:
+3. **Validate Database:** Inspect the SQLite DB for the pending proposal (note: `outcome` is `NULL` when pending):
    ```bash
-   docker compose exec hermes-agent sqlite3 /var/hermes/hermes.db \
-     "SELECT id, alert_type, action_id, status FROM action_proposals WHERE status = 'pending';"
+   docker compose exec hermes-agent sqlite3 /var/hermes/incidents.db \
+     "SELECT ap.id, i.alert_type, ap.action_id, ap.outcome FROM action_proposals ap JOIN incidents i ON ap.incident_id = i.id WHERE ap.outcome IS NULL;"
    ```
-4. **Simulate Approval:** (In a real scenario, this is done via UI/API. For testing, update the DB directly or use the approval endpoint if exposed):
+4. **Simulate Approval:** (In a real scenario, this is done via UI/API. For testing, update the DB directly):
    ```bash
-   docker compose exec hermes-agent sqlite3 /var/hermes/hermes.db \
-     "UPDATE action_proposals SET status = 'approved' WHERE status = 'pending';"
+   docker compose exec hermes-agent sqlite3 /var/hermes/incidents.db \
+     "UPDATE action_proposals SET outcome = 'approved', resolved_at = datetime('now') WHERE outcome IS NULL;"
    ```
 5. **Validate Execution:** Check `hermes-agent` logs for `Executing action` and verify the `executor.py` successfully ran the command (e.g., `docker restart execution`).
 6. **Validate Outcome:** Verify a record was written to the `runbook_outcomes` table.
 
 ### Scenario E: Self-Monitoring Failure
-**Goal:** Verify the agent detects its own silence.
+**Goal:** Verify the agent detects its own silence and recovers from backlog.
 
 1. **Trigger:** Stop the hermes-agent container:
    ```bash
    docker compose stop hermes-agent
    ```
-2. **Validate:** Wait 2 minutes. Check Prometheus for the `HermesAgentSilent` alert firing.
-   *Expected:* Alertmanager routes this to the webhook receiver, and you receive a critical notification.
+2. **Validate Queue Survival:** Wait 2 minutes. Check Prometheus for the `HermesAgentSilent` alert firing. Alertmanager will route this to the webhook receiver, which will append it to `alerts.jsonl`.
+3. **Validate Backlog Drain:** Restart the agent:
+   ```bash
+   docker compose start hermes-agent
+   ```
+   *Expected:* Upon restart, `hermes-agent` reads the backlogged `HermesAgentSilent` alert from the queue and sends the critical notification. This validates that the queue survived the outage and the backlog is drained correctly.
+   
+   > **Design Limitation Note:** Self-monitoring alerts cannot notify you in real-time if `hermes-agent` itself is down, because the agent is the component that dispatches notifications. If real-time silence alerting is required, you must configure a secondary notification path (e.g., Alertmanager routing `HermesAgentSilent` directly to a Discord webhook in addition to the Hermes receiver).
 
 ---
 
@@ -139,7 +158,7 @@ curl http://localhost:8091/metrics | grep hermes_alive
 ### 4.1 Verify Phase 5 Data Accumulation
 Ensure the database is correctly logging outcomes for future synthesis:
 ```bash
-docker compose exec hermes-agent sqlite3 /var/hermes/hermes.db \
+docker compose exec hermes-agent sqlite3 /var/hermes/incidents.db \
   "SELECT COUNT(*) FROM incidents; SELECT COUNT(*) FROM runbook_outcomes;"
 ```
 *Expected:* Counts > 0 if Scenario A and D were successful.
