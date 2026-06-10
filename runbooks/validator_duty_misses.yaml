@@ -1,13 +1,14 @@
 id: validator_duty_misses
 description: Validator is missing attestation or proposal duties.
-trigger:
-  alert_type: validator_duty_misses
+triggers:
+  - alert_type: validator_duty_misses
+    min_severity: low
 diagnostics:
   - id: check_validator_status
-    cmd: "curl -s http://validator:5042/eth/v1/validator/status"
+    cmd: "curl -s http://validator:5062/eth/v1/validator/status"
     description: "Check validator client status"
     timeout: 5s
-actions:
+suggested_actions:
   - id: restart_validator
     description: "Restart the validator client"
     cmd: "docker restart validator"
