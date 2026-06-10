@@ -5,7 +5,7 @@ triggers:
     min_severity: low
 diagnostics:
   - id: check_container_status
-    cmd: "docker inspect --format='{{{{.State.Status}}}}' execution"
+    cmd: "docker inspect --format='{{.State.Status}}' execution"
     description: "Verify current container state"
     timeout: 5s
   - id: check_container_logs
