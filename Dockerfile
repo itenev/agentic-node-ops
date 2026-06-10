@@ -3,8 +3,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install uv for fast, reliable dependency resolution
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# Install uv for fast, reliable dependency resolution (pinned for reproducibility)
+COPY --from=ghcr.io/astral-sh/uv:0.5.25 /uv /bin/uv
 
 # Copy project files (explicit uv.lock required for --frozen)
 COPY pyproject.toml uv.lock ./
