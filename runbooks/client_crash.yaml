@@ -1,0 +1,22 @@
+id: client_crash
+description: Ethereum client container has crashed or exited unexpectedly.
+triggers:
+  - alert_type: client_crash
+    min_severity: low
+diagnostics:
+  - id: check_container_status
+    cmd: "docker inspect --format='{{.State.Status}}' execution"
+    description: "Verify current container state"
+    timeout: 5s
+  - id: check_container_logs
+    cmd: "docker logs execution --tail 100"
+    description: "Inspect last 100 lines of container logs"
+    timeout: 10s
+suggested_actions:
+  - id: restart_client
+    description: "Restart the crashed client container"
+    cmd: "docker restart execution"
+    risk: low
+    reversible: true
+    requires_approval: true
+    approval_timeout: 10m

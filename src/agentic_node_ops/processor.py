@@ -213,3 +213,7 @@ def run_processor_loop(
 
     # Clear heartbeat on shutdown
     HERMES_ALIVE.set(0)
+
+
+if __name__ == "__main__":
+    run_processor_loop()
