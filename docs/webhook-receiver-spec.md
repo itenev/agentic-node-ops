@@ -198,6 +198,16 @@ def should_process(alert, db):
 }
 ```
 
+### Label hardening (injection boundary)
+
+Alert labels are attacker-controlled input — any client that can reach the webhook can set them. Fields that leave the receiver's process are validated at the schema boundary:
+
+- `container` (and the `container_name`/`service` fallbacks) must be a string matching the Docker name charset (`[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}` — `fullmatch`, so Python's `$`-before-trailing-newline quirk can't smuggle `\n`). A failing or non-string label is logged and dropped to `null` — the alert is still ingested, just without container context. Fail-open for ingestion, fail-closed for the injection surface. The unsanitized original stays in `raw_labels` for audit; `alert.container` is the validated, safe field.
+- `client` is already allowlisted (`lighthouse`, `prysm`, ...).
+- As defense in depth, the context fetcher percent-encodes the container name again when building the Docker API request line, so even a value that bypassed validation cannot alter the HTTP request (CRLF injection / request smuggling).
+
+This is the boundary any future feature must preserve before interpolating alert fields into commands, URLs or API paths.
+
 **Key principle:** pre-fetch the cheap context snapshot *at receive time*, not when the LLM processes it.
 
 ---
