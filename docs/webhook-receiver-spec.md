@@ -61,8 +61,37 @@ receivers:
     webhook_configs:
       - url: 'http://webhook-receiver:8090/webhook'
         send_resolved: true   # notify Hermes when alerts clear
-        http_config: {}       # no auth required on the internal network
+        http_config:
+          http_headers:
+            # Alertmanager 0.27+ schema: each header maps to
+            # values/secrets/files lists. `secrets` stay hidden in the AM UI.
+            X-Hermes-Token:
+              secrets: ['<WEBHOOK_AUTH_TOKEN value>']
 ```
+
+## Authentication
+
+The webhook endpoint is protected by a **shared-secret token** (the receiver may be reachable from networks beyond the trusted compose bridge, so it must not accept unauthenticated posts):
+
+- Alertmanager sends the token in the `X-Hermes-Token` header on every POST.
+- The receiver hashes both sides with SHA-256 and compares the digests with `hmac.compare_digest` — constant-time, and the fixed digest length leaks neither token content nor length.
+- Malformed header bytes (aiohttp decodes headers with `surrogateescape`) or a non-UTF-8 `WEBHOOK_AUTH_TOKEN` can never raise inside the handler — they can only mismatch (encoded with `surrogatepass`).
+- **Fail closed:** if `WEBHOOK_AUTH_TOKEN` is not configured (or empty), the receiver rejects every webhook post with `503` — it never falls back to unauthenticated acceptance.
+- Wrong/missing token → `401`, logged with the client address only (the provided token value is never logged).
+- `/health` stays open for liveness probes; it exposes counters only, no sensitive data.
+
+Generate a token:
+
+```
+openssl rand -hex 32
+```
+
+Set it in both places:
+
+| Component | Setting |
+|---|---|
+| webhook-receiver | env `WEBHOOK_AUTH_TOKEN` (compose, from `.env`) |
+| Alertmanager | `webhook_configs[].http_config.http_headers.X-Hermes-Token.secrets` (Alertmanager 0.27+) |
 
 `send_resolved: true` is required so Hermes can close incidents and trigger post-incident feedback collection when an alert clears.
 
