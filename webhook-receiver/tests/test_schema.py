@@ -116,3 +116,113 @@ class TestValidatePayload:
         payload["alerts"][0]["labels"].pop("host")
         alerts = validate_alertmanager_payload(payload)
         assert alerts[0].host == "unknown"
+
+
+class TestContainerLabelValidation:
+    """Container labels are attacker-controlled; they must be validated at
+    the schema boundary before reaching the Docker API request line."""
+
+    def test_valid_container_names_pass(self):
+        for name in (
+            "consensus",
+            "eth-staker-consensus-1",
+            "validator.lighthouse",
+            "geth_1",
+        ):
+            payload = _am_payload(alerts=[_am_alert(extra_labels={"container": name})])
+            alerts = validate_alertmanager_payload(payload)
+            assert alerts[0].container == name
+
+    def test_crlf_injection_label_rejected(self):
+        payload = _am_payload(
+            alerts=[
+                _am_alert(
+                    extra_labels={
+                        "container": "x HTTP/1.1\r\nGET /version HTTP/1.1\r\n"
+                    }
+                )
+            ]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_space_in_container_label_rejected(self):
+        payload = _am_payload(
+            alerts=[_am_alert(extra_labels={"container": "bad name"})]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_path_traversal_container_label_rejected(self):
+        payload = _am_payload(
+            alerts=[_am_alert(extra_labels={"container": "../var/run/docker"})]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_query_string_container_label_rejected(self):
+        payload = _am_payload(
+            alerts=[_am_alert(extra_labels={"container": "x?all=1&t=1"})]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_unicode_container_label_rejected(self):
+        payload = _am_payload(alerts=[_am_alert(extra_labels={"container": "容器"})])
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_leading_dash_container_label_rejected(self):
+        # first character must be alphanumeric
+        payload = _am_payload(alerts=[_am_alert(extra_labels={"container": "-dash"})])
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_empty_container_label_ignored(self):
+        payload = _am_payload(alerts=[_am_alert(extra_labels={"container": ""})])
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_service_label_also_validated(self):
+        payload = _am_payload(
+            alerts=[_am_alert(extra_labels={"service": "bad service"})]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_trailing_newline_rejected(self):
+        """Python's `$` would match before a trailing \\n — the check must
+        use fullmatch so "foo\\n" cannot pass as a container name."""
+        payload = _am_payload(alerts=[_am_alert(extra_labels={"container": "foo\n"})])
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_overlong_name_rejected(self):
+        payload = _am_payload(alerts=[_am_alert(extra_labels={"container": "a" * 256})])
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_non_string_label_rejected_not_crash(self):
+        """Truthy non-string labels must degrade to None, never raise."""
+        for bad in (123, True, 1.5, ["x"], {"a": 1}, b"x"):
+            payload = _am_payload(alerts=[_am_alert(extra_labels={"container": bad})])
+            alerts = validate_alertmanager_payload(payload)
+            assert alerts[0].container is None
+
+    def test_container_name_key_validated(self):
+        payload = _am_payload(
+            alerts=[_am_alert(extra_labels={"container_name": "bad name"})]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
+
+    def test_malformed_container_beats_valid_service(self):
+        """A malformed container label wins over a valid service label —
+        the payload is suspicious, so no container context is attached."""
+        payload = _am_payload(
+            alerts=[
+                _am_alert(extra_labels={"container": "bad name", "service": "goodsvc"})
+            ]
+        )
+        alerts = validate_alertmanager_payload(payload)
+        assert alerts[0].container is None
