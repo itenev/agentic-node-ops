@@ -35,10 +35,13 @@ services:
     volumes:
       - hermes-data:/var/hermes
     environment:
-      - ALERT_QUEUE_PATH=/var/hermes/alerts.jsonl
-      - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
+      - ALERTS_JSONL_PATH=/var/hermes/alerts.jsonl
+      - INCIDENTS_DB_PATH=/var/hermes/incidents.db
       - PROMETHEUS_URL=http://prometheus:9090
-      - DOCKER_HOST=tcp://hermes-docker-proxy:2376
+      # NOTE: the receiver speaks to the Docker API over a Unix socket
+      # (DOCKER_SOCKET_PATH) which is not mounted here — container
+      # status is reported as "unavailable"; peer/validator counts fall
+      # back to Prometheus per the spec's fallback chain.
       - WEBHOOK_AUTH_TOKEN=${WEBHOOK_AUTH_TOKEN}
     networks:
       - hermes-monitoring
@@ -57,7 +60,7 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
       - LOKI_URL=http://loki:3100
       - BEACON_URL=http://consensus:5052
-      - ALERT_QUEUE_PATH=/var/hermes/alerts.jsonl
+      - ALERTS_JSONL_PATH=/var/hermes/alerts.jsonl
       - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
       - NTFY_TOPIC=${NTFY_TOPIC}
