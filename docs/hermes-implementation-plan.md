@@ -220,7 +220,7 @@
 
 [x] Complete — Implemented nginx socket-proxy migration:
   - `webhook-receiver/nginx-docker-filter.conf`: nginx configuration using `map` to allowlist only `GET` requests and `POST /containers/{name}/restart`, blocking all other mutations.
-  - `docker-compose.yml`: Full Phase 4 compose configuration wiring `hermes-docker-proxy` (nginx) in front of `docker-socket-proxy`, with `DOCKER_HOST` updated for both `webhook-receiver` and `hermes-agent`.
+  - `docker-compose.yml`: Full Phase 4 compose configuration wiring `hermes-docker-proxy` (nginx) in front of `docker-socket-proxy`, with `DOCKER_HOST` set for `hermes-agent` (the webhook-receiver uses the Unix socket and gets no `DOCKER_HOST`).
 
 ---
 

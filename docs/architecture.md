@@ -157,7 +157,7 @@ services:
   hermes-docker-proxy:
     image: nginx:alpine
     volumes:
-      - ./nginx-docker-filter.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./webhook-receiver/nginx-docker-filter.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - hermes-monitoring
     depends_on:
@@ -168,9 +168,8 @@ services:
     environment:
       - DOCKER_HOST=tcp://hermes-docker-proxy:2376
 
-  webhook-receiver:
-    environment:
-      - DOCKER_HOST=tcp://hermes-docker-proxy:2376
+  # webhook-receiver gets NO DOCKER_HOST: it queries container status via
+  # the Unix socket (DOCKER_SOCKET_PATH) only.
 ```
 
 ### Compose configuration (Phases 1-3)
@@ -198,10 +197,14 @@ services:
     volumes:
       - hermes-data:/var/hermes
     environment:
-      - ALERT_QUEUE_PATH=/var/hermes/alerts.jsonl
+      - ALERTS_JSONL_PATH=/var/hermes/alerts.jsonl
       - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
+      - INCIDENTS_DB_PATH=/var/hermes/incidents.db
       - PROMETHEUS_URL=http://prometheus:9090
-      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      # NOTE: the receiver speaks to the Docker API over a Unix socket
+      # (DOCKER_SOCKET_PATH) which is not mounted here — container
+      # status is reported as "unavailable"; peer/validator counts fall
+      # back to Prometheus per the spec's fallback chain.
     networks:
       - hermes-monitoring
       - ethd_default
@@ -216,7 +219,7 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
       - LOKI_URL=http://loki:3100
       - BEACON_URL=http://consensus:5052
-      - ALERT_QUEUE_PATH=/var/hermes/alerts.jsonl
+      - ALERTS_JSONL_PATH=/var/hermes/alerts.jsonl
       - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
       - NTFY_TOPIC=${NTFY_TOPIC}
