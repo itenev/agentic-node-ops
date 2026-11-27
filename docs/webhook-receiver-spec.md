@@ -117,6 +117,18 @@ If hermes-agent is down, the receiver continues appending. On restart, the agent
 
 Context is pre-fetched at receive time. If a context source is unavailable (e.g. Lighthouse API is down because it crashed), the receiver substitutes **last-known values from Prometheus** for that metric. If Prometheus is also unreachable, the field is set to `"unavailable"` and flagged in the alert so Hermes knows context is stale.
 
+The fetcher does blocking network I/O (raw socket to the Docker API + urllib to Prometheus), so it **never runs on the aiohttp event loop**: each alert's snapshot is fetched in a worker thread via `asyncio.to_thread`, bounded by a single process-wide semaphore shared across all requests. A slow or hanging fetch can delay that request's response (bounded by the fetch timeout), but `/health` and all other clients stay responsive. A fetch that raises or times out never drops the alert — the snapshot is degraded with a `context fetch failed` note instead.
+
+Hard caps (DoS guard on the ingest path):
+
+| Env var | Default | Effect |
+|---|---|---|
+| `MAX_ALERTS_PER_REQUEST` | `200` | Payloads with more alerts are refused with `413` after parsing/validation but before any per-alert context work runs. Alertmanager groups are small; anything larger is malformed or abusive. |
+| `CONTEXT_FETCH_CONCURRENCY` | `8` | Maximum simultaneous context fetches across the whole process (shared semaphore). |
+| `CONTEXT_FETCH_TIMEOUT` | `30` | Per-alert seconds a context fetch may take before the snapshot is degraded. |
+
+Both parse as positive integers; a missing, non-numeric, zero or negative value degrades to the default with a warning instead of breaking ingestion (a concurrency of `0` would deadlock the fetch pool; a cap of `0` would reject every payload).
+
 ```json
 {
   "context_snapshot": {
