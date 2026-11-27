@@ -30,7 +30,7 @@
 | 9 | INFO | Containers run as root (no USER directive). Not a free fix: the shared `hermes-data` volume plus SQLite WAL means naive non-root users break dedup (`-shm` must be writable by readers). Needs a coordinated uid/gid design. | Open — follow-up hardening task. |
 | 10 | INFO | Token travels over plain HTTP on the internal network; nginx filter allows all GETs (including `/containers/json` and container inspect with Env) to anything on `hermes-monitoring`. | Open — TLS or trusted segment; acceptable while the network stays closed. |
 | 11 | INFO | Malformed-UTF-8 bodies raise `UnicodeDecodeError` → 500 (aiohttp's `request.json()` path) instead of a clean 400; reachable only by authenticated callers after fix #1. | Open — extend the except tuple when next touching the handler. |
-| 12 | INFO | ruff 0.17's expanded default rule set (I/UP/PLW) reports 129 pre-existing findings on `main`, so CI lint is red on current tooling. | Open — separate style PR (`ruff check --fix` handles most); security branches were held to a zero-new-findings delta. |
+| 12 | INFO | ruff 0.17's expanded default rule set (I/UP/PLW) reports 129 pre-existing findings on `main`, and its formatter newly checks Python blocks embedded in Markdown docs — so CI lint is red on current tooling for every branch. | **Fixed** — `ci/ruff-gate` (#29): lint gate pinned explicitly to `E4/E7/E9/F` (the ruleset this codebase was written against; zero findings under it) and the formatter excluded from `*.md`. Adopting the newer rule families remains a deliberate future `style:` change, not a silent tool upgrade. Security branches were held to a zero-new-findings delta throughout. |
 
 ## Residual-risk notes for operators
 
