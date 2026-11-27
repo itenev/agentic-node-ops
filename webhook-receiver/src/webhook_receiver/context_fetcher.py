@@ -44,6 +44,18 @@ def _query_prometheus(query: str) -> Optional[float]:
     return None
 
 
+def _container_inspect_path(container_name: str) -> str:
+    """Build the Docker API inspect path for a container name.
+
+    Defense in depth: even though schema validation already rejects
+    non-Docker-name characters, the name is percent-encoded here so it
+    can never alter the HTTP request line (CRLF injection / request
+    smuggling against the socket proxy) regardless of the caller.
+    """
+    encoded = urllib.parse.quote(container_name, safe="")
+    return f"/containers/{encoded}/json"
+
+
 def _get_docker_container_status(
     container_name: str,
 ) -> Tuple[Optional[str], Optional[str]]:
@@ -51,10 +63,12 @@ def _get_docker_container_status(
     Query Docker socket for container status.
     Returns (status, note).
     """
-    api_path = f"/containers/{container_name}/json"
-    request = f"GET {api_path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n"
-
     try:
+        api_path = _container_inspect_path(container_name)
+        request = (
+            f"GET {api_path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n"
+        )
+
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(2.0)
             sock.connect(DOCKER_SOCKET_PATH)

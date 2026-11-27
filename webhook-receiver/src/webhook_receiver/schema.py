@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
 from .types import AlertStatus, HermesAlert, Severity, _generate_event_id
+
+log = logging.getLogger(__name__)
 
 
 class ValidationError(Exception):
@@ -66,11 +70,37 @@ def _extract_client(labels: dict) -> Optional[str]:
     return None
 
 
+# Docker container/service names: start alphanumeric, then alphanumerics,
+# underscores, dots or dashes, at most 255 chars. The container label is
+# attacker-controlled input (any webhook client can set labels), and it
+# later reaches the Docker API request line and downstream tooling — so
+# anything outside this charset (spaces, CR/LF, path separators, unicode)
+# is rejected here, at the schema boundary, before it is used anywhere.
+# fullmatch (not match+$): Python's `$` would accept a trailing newline.
+# {0,254} caps names at 255 chars alongside the charset check.
+_CONTAINER_NAME_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}")
+
+
 def _extract_container(labels: dict) -> Optional[str]:
-    """Infer container name from labels."""
+    """Infer container name from labels.
+
+    Returns None for values that are not strings or fail the Docker-name
+    charset check — the alert is still processed, just without container
+    context (fail-open for ingestion, fail-closed for the injection
+    surface). The unsanitized original stays in raw_labels for audit;
+    alert.container is the validated, safe field.
+    """
     for key in ("container", "container_name", "service"):
         val = labels.get(key)
         if val:
+            if not isinstance(val, str) or not _CONTAINER_NAME_RE.fullmatch(val):
+                log.warning(
+                    "Rejected malformed container label %r from label %r "
+                    "(fails Docker-name charset)",
+                    val,
+                    key,
+                )
+                return None
             return val
     return None
 

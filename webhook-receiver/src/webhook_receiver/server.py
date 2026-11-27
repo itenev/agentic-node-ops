@@ -7,6 +7,8 @@ normalizes, deduplicates, applies storm protection, and appends to alerts.jsonl.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -67,11 +69,14 @@ class QueueWriter:
 class WebhookHandler:
     """Handles POST /webhook requests from Alertmanager."""
 
+    AUTH_HEADER = "X-Hermes-Token"
+
     def __init__(
         self,
         writer: Optional[QueueWriter] = None,
         dedup_lookup: Optional[DedupLookup] = None,
         storm_tracker: Optional[StormTracker] = None,
+        auth_token: str | None = None,
         max_alerts: int | None = None,
         fetch_concurrency: int | None = None,
         fetch_timeout: int | None = None,
@@ -79,6 +84,13 @@ class WebhookHandler:
         self.writer = writer or QueueWriter()
         self.dedup_lookup = dedup_lookup or DedupLookup()
         self.storm_tracker = storm_tracker or StormTracker()
+        # Precompute comparison bytes. surrogatepass tolerates non-UTF-8
+        # bytes from os.environ and from request headers (aiohttp decodes
+        # header values with surrogateescape), so a malformed token can
+        # never raise here — it can only mismatch.
+        self._expected_token_bytes = (
+            auth_token.encode("utf-8", "surrogatepass") if auth_token else None
+        )
         self.max_alerts = (
             max_alerts
             if max_alerts is not None and max_alerts > 0
@@ -102,9 +114,46 @@ class WebhookHandler:
         self.alerts_deduped = 0
         self.alerts_bundled = 0
         self.alerts_errors = 0
+        self.auth_rejected = 0
+
+    def _check_auth(self, request: web.Request) -> web.Response | None:
+        """Validate the shared-secret token. Returns an error response or None.
+
+        Fails closed: if no token is configured, all webhook posts are
+        rejected (503) rather than accepted unauthenticated.
+        """
+        if self._expected_token_bytes is None:
+            log.error(
+                "Rejected webhook: WEBHOOK_AUTH_TOKEN is not configured (fail closed)"
+            )
+            self.auth_rejected += 1
+            return web.json_response(
+                {"error": "Authentication not configured"}, status=503
+            )
+
+        provided = request.headers.get(self.AUTH_HEADER, "")
+        # sha256 digests make the comparison fixed-length, so
+        # hmac.compare_digest leaks neither content nor length.
+        if not hmac.compare_digest(
+            hashlib.sha256(provided.encode("utf-8", "surrogatepass")).digest(),
+            hashlib.sha256(self._expected_token_bytes).digest(),
+        ):
+            log.warning(
+                "Rejected webhook from %s: invalid or missing %s header",
+                request.remote,
+                self.AUTH_HEADER,
+            )
+            self.auth_rejected += 1
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        return None
 
     async def handle_webhook(self, request: web.Request) -> web.Response:
         """POST /webhook — accepts Alertmanager webhook payloads."""
+        auth_error = self._check_auth(request)
+        if auth_error is not None:
+            return auth_error
+
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -233,6 +282,7 @@ class WebhookHandler:
                 "alerts_deduped": self.alerts_deduped,
                 "alerts_bundled": self.alerts_bundled,
                 "alerts_errors": self.alerts_errors,
+                "auth_rejected": self.auth_rejected,
             }
         )
 
@@ -240,6 +290,7 @@ class WebhookHandler:
 def create_app(
     db_path: Optional[str] = None,
     jsonl_path: Optional[str] = None,
+    auth_token: str | None = None,
     max_alerts: int | None = None,
     fetch_concurrency: int | None = None,
     fetch_timeout: int | None = None,
@@ -252,6 +303,7 @@ def create_app(
         writer=writer,
         dedup_lookup=dedup,
         storm_tracker=storm,
+        auth_token=auth_token,
         max_alerts=max_alerts,
         fetch_concurrency=fetch_concurrency,
         fetch_timeout=fetch_timeout,
@@ -267,9 +319,16 @@ def main() -> None:
     port = int(os.environ.get("WEBHOOK_PORT", 8090))
     db_path = os.environ.get("INCIDENTS_DB_PATH")
     jsonl_path = os.environ.get("ALERTS_JSONL_PATH")
+    auth_token = os.environ.get("WEBHOOK_AUTH_TOKEN")
     logging.basicConfig(level=logging.INFO)
+    if not auth_token:
+        log.warning(
+            "WEBHOOK_AUTH_TOKEN is not set — all webhook posts will be "
+            "rejected (fail closed). Generate one with: "
+            "openssl rand -hex 32"
+        )
     log.info("Starting webhook receiver on port %d", port)
-    app = create_app(db_path=db_path, jsonl_path=jsonl_path)
+    app = create_app(db_path=db_path, jsonl_path=jsonl_path, auth_token=auth_token)
     web.run_app(app, host="0.0.0.0", port=port)
 
 

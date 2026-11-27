@@ -142,3 +142,71 @@ class TestFetchContextSnapshot:
         assert snapshot.container_status is None
         assert snapshot.peer_count == 50
         assert snapshot.prometheus_fallback_used is False
+
+
+class TestContainerInspectPath:
+    """The inspect path must percent-encode the name so it can never alter
+    the HTTP request line, even for callers that skip schema validation."""
+
+    def test_valid_name_unchanged(self):
+        from webhook_receiver.context_fetcher import _container_inspect_path
+
+        assert (
+            _container_inspect_path("eth-staker-consensus-1")
+            == "/containers/eth-staker-consensus-1/json"
+        )
+
+    def test_crlf_is_percent_encoded(self):
+        from webhook_receiver.context_fetcher import _container_inspect_path
+
+        path = _container_inspect_path("x\r\nGET /version HTTP/1.1\r\n")
+        assert path == "/containers/x%0D%0AGET%20%2Fversion%20HTTP%2F1.1%0D%0A/json"
+
+    def test_space_and_slash_are_encoded(self):
+        from webhook_receiver.context_fetcher import _container_inspect_path
+
+        assert _container_inspect_path("a b") == "/containers/a%20b/json"
+        assert _container_inspect_path("a/b") == "/containers/a%2Fb/json"
+        assert _container_inspect_path("?q=1") == "/containers/%3Fq%3D1/json"
+
+    def test_percent_backslash_hash_and_unicode_encoded(self):
+        from webhook_receiver.context_fetcher import _container_inspect_path
+
+        assert _container_inspect_path("a\\b") == "/containers/a%5Cb/json"
+        assert _container_inspect_path("a#b") == "/containers/a%23b/json"
+        assert _container_inspect_path("a%b") == "/containers/a%25b/json"
+        assert _container_inspect_path("容器") == "/containers/%E5%AE%B9%E5%99%A8/json"
+
+    def test_request_line_never_carries_raw_crlf_from_name(self, monkeypatch):
+        """End-to-end: whatever the name, the bytes on the wire carry it
+        percent-encoded — the request line's CRLFs are structural only."""
+        import webhook_receiver.context_fetcher as cf
+
+        captured = {}
+
+        class FakeSock:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def settimeout(self, t):
+                pass
+
+            def connect(self, path):
+                pass
+
+            def sendall(self, data):
+                captured["req"] = data.decode("latin-1")
+
+            def recv(self, n):
+                return b""
+
+        monkeypatch.setattr(cf.socket, "socket", FakeSock)
+        cf._get_docker_container_status("bad\r\nname")
+        lines = captured["req"].split("\r\n")
+        assert lines[0] == "GET /containers/bad%0D%0Aname/json HTTP/1.1"
