@@ -25,6 +25,7 @@ Deterministic alerting for known failures. LLM-driven contextual analysis for ev
 | [Memory and Feedback](memory-and-feedback.md) | Database schema (incidents, host_fingerprints, operator_corrections, runbook_outcomes, action_proposals), context assembly for Hermes prompts, post-incident feedback collection, host baseline learning |
 | [Alert Set](alert-set.md) | Initial alert set (consensus desync, duty misses, slashing risk, client crash), telemetry plane health alerts |
 | [Notification Design](notification-design.md) | Two-tier notification routing (Discord + ntfy.sh), severity routing, Discord embed design, mention behaviour, ntfy.sh setup, environment variables |
+| [Security Analysis](security-analysis.md) | Threat model, implementation review findings (auth, DoS, injection boundaries), remediation status, residual-risk notes for operators |
 
 ---
 
