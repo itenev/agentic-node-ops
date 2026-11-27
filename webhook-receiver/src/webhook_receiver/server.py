@@ -6,6 +6,7 @@ normalizes, deduplicates, applies storm protection, and appends to alerts.jsonl.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -20,9 +21,31 @@ from .context_fetcher import fetch_context_snapshot
 from .dedup import DedupLookup, should_process
 from .schema import ValidationError, validate_alertmanager_payload
 from .storm_protection import StormTracker
-from .types import HermesAlert
+from .types import ContextSnapshot, HermesAlert
 
 log = logging.getLogger(__name__)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Parse a positive integer env var, falling back on garbage.
+
+    Zero or negative values are dangerous here: a concurrency of 0
+    deadlocks every request (Semaphore(0) never yields), a cap of 0
+    rejects every payload. Misconfiguration degrades to the default
+    instead of taking down ingestion.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        val = int(raw)
+    except ValueError:
+        log.warning("Invalid %s=%r, defaulting to %d", name, raw, default)
+        return default
+    if val < 1:
+        log.warning("%s=%d is not positive, defaulting to %d", name, val, default)
+        return default
+    return val
 
 
 class QueueWriter:
@@ -54,6 +77,9 @@ class WebhookHandler:
         dedup_lookup: Optional[DedupLookup] = None,
         storm_tracker: Optional[StormTracker] = None,
         auth_token: str | None = None,
+        max_alerts: int | None = None,
+        fetch_concurrency: int | None = None,
+        fetch_timeout: int | None = None,
     ) -> None:
         self.writer = writer or QueueWriter()
         self.dedup_lookup = dedup_lookup or DedupLookup()
@@ -65,6 +91,25 @@ class WebhookHandler:
         self._expected_token_bytes = (
             auth_token.encode("utf-8", "surrogatepass") if auth_token else None
         )
+        self.max_alerts = (
+            max_alerts
+            if max_alerts is not None and max_alerts > 0
+            else _positive_int_env("MAX_ALERTS_PER_REQUEST", 200)
+        )
+        self.fetch_concurrency = (
+            fetch_concurrency
+            if fetch_concurrency is not None and fetch_concurrency > 0
+            else _positive_int_env("CONTEXT_FETCH_CONCURRENCY", 8)
+        )
+        self.fetch_timeout = (
+            fetch_timeout
+            if fetch_timeout is not None and fetch_timeout > 0
+            else _positive_int_env("CONTEXT_FETCH_TIMEOUT", 30)
+        )
+        # One semaphore for the process, not per request: the concurrency
+        # bound must hold across concurrent webhook posts, not just within
+        # one. (Lazily loop-bound on first acquire; safe to construct here.)
+        self._fetch_sem = asyncio.Semaphore(self.fetch_concurrency)
         self.alerts_received = 0
         self.alerts_deduped = 0
         self.alerts_bundled = 0
@@ -124,13 +169,47 @@ class WebhookHandler:
         if not alerts:
             return web.json_response({"status": "ok", "alerts_processed": 0})
 
-        # Pre-fetch context snapshot for each alert
-        for alert in alerts:
-            alert.context_snapshot = fetch_context_snapshot(
-                host=alert.host,
-                container=alert.container,
-                client=alert.client,
+        # Hard cap: refuse absurdly large batches instead of amplifying
+        # per-alert context work (Alertmanager groups are small; anything
+        # above the cap is malformed or abusive).
+        if len(alerts) > self.max_alerts:
+            self.alerts_errors += 1
+            log.warning(
+                "Rejected payload with %d alerts (max %d)",
+                len(alerts),
+                self.max_alerts,
             )
+            return web.json_response(
+                {"error": f"Too many alerts in payload (max {self.max_alerts})"},
+                status=413,
+            )
+
+        # Pre-fetch context snapshot for each alert.
+        # fetch_context_snapshot does blocking network I/O (raw socket to
+        # Docker + urllib to Prometheus) — it must never run on the event
+        # loop, or one large payload stalls /health for every concurrent
+        # client. Bounded worker threads + shared semaphore instead; a
+        # fetch failure or timeout degrades the snapshot, never the ingest.
+        async def _fetch(alert: HermesAlert) -> None:
+            async with self._fetch_sem:
+                try:
+                    alert.context_snapshot = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            fetch_context_snapshot,
+                            host=alert.host,
+                            container=alert.container,
+                            client=alert.client,
+                        ),
+                        timeout=self.fetch_timeout,
+                    )
+                except Exception as e:  # noqa: BLE001 — degrade, don't drop
+                    log.warning("Context fetch failed for %s: %s", alert.id, e)
+                    # Fresh snapshot: never mutate/assume the current one.
+                    alert.context_snapshot = ContextSnapshot(
+                        container_status_note=f"context fetch failed: {type(e).__name__}"
+                    )
+
+        await asyncio.gather(*(_fetch(a) for a in alerts))
 
         offsets = []
         deduped_ids = []
@@ -212,6 +291,9 @@ def create_app(
     db_path: Optional[str] = None,
     jsonl_path: Optional[str] = None,
     auth_token: str | None = None,
+    max_alerts: int | None = None,
+    fetch_concurrency: int | None = None,
+    fetch_timeout: int | None = None,
 ) -> web.Application:
     """Create and configure the aiohttp application."""
     writer = QueueWriter(path=jsonl_path)
@@ -222,6 +304,9 @@ def create_app(
         dedup_lookup=dedup,
         storm_tracker=storm,
         auth_token=auth_token,
+        max_alerts=max_alerts,
+        fetch_concurrency=fetch_concurrency,
+        fetch_timeout=fetch_timeout,
     )
     app = web.Application()
     app.router.add_post("/webhook", handler.handle_webhook)
