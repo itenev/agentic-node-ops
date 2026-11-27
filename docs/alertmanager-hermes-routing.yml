@@ -20,11 +20,15 @@ receivers:
       # Adjust the URL if webhook-receiver is deployed on a different host/port
       - url: 'http://webhook-receiver:8090/webhook'
         send_resolved: true
-        # Optional: Add basic auth or headers if your webhook receiver requires it
-        # http_config:
-        #   basic_auth:
-        #     username: 'hermes'
-        #     password: 'your-secret'
+        # Shared-secret auth: must match WEBHOOK_AUTH_TOKEN in the receiver's env.
+        # Generate with: openssl rand -hex 32
+        # Alertmanager 0.27+ schema: http_headers live under http_config and
+        # each value must be a mapping (values/secrets/files). `secrets` stay
+        # hidden in the Alertmanager UI.
+        http_config:
+          http_headers:
+            X-Hermes-Token:
+              secrets: ['<WEBHOOK_AUTH_TOKEN value>']
 
 # Global settings (ensure these match your existing Alertmanager config)
 global:

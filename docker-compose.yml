@@ -39,6 +39,7 @@ services:
       - ALERT_OFFSET_PATH=/var/hermes/alerts.jsonl.offset
       - PROMETHEUS_URL=http://prometheus:9090
       - DOCKER_HOST=tcp://hermes-docker-proxy:2376
+      - WEBHOOK_AUTH_TOKEN=${WEBHOOK_AUTH_TOKEN}
     networks:
       - hermes-monitoring
       - ethd_default
