@@ -2,12 +2,14 @@
 
 import json
 import sqlite3
+import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from multidict import CIMultiDict
 
-from webhook_receiver.server import create_app
+from webhook_receiver.server import QueueWriter, WebhookHandler, create_app
 
 
 @pytest.fixture
@@ -36,10 +38,14 @@ def tmp_db(tmp_path):
     return str(db_path)
 
 
+TEST_AUTH_TOKEN = "test-secret-token-abc123"
+AUTH = {"X-Hermes-Token": TEST_AUTH_TOKEN}
+
+
 @pytest.fixture
 def app(tmp_jsonl, tmp_db):
-    """Create app with temporary paths."""
-    return create_app(db_path=tmp_db, jsonl_path=tmp_jsonl)
+    """Create app with temporary paths and a configured auth token."""
+    return create_app(db_path=tmp_db, jsonl_path=tmp_jsonl, auth_token=TEST_AUTH_TOKEN)
 
 
 @pytest.fixture
@@ -86,7 +92,7 @@ class TestHealthEndpoint:
         await client.post(
             "/webhook",
             data="not json",
-            headers={"Content-Type": "text/plain"},
+            headers={"Content-Type": "text/plain", **AUTH},
         )
         resp = await client.get("/health")
         data = await resp.json()
@@ -95,7 +101,7 @@ class TestHealthEndpoint:
 
 class TestWebhookEndpoint:
     async def test_valid_webhook_returns_200(self, client):
-        resp = await client.post("/webhook", json=_valid_payload())
+        resp = await client.post("/webhook", json=_valid_payload(), headers=AUTH)
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "ok"
@@ -116,7 +122,7 @@ class TestWebhookEndpoint:
                 "startsAt": "2025-01-01T00:00:00Z",
             }
         )
-        resp = await client.post("/webhook", json=payload)
+        resp = await client.post("/webhook", json=payload, headers=AUTH)
         data = await resp.json()
         assert data["alerts_processed"] == 2
 
@@ -124,20 +130,22 @@ class TestWebhookEndpoint:
         resp = await client.post(
             "/webhook",
             data="not json",
-            headers={"Content-Type": "text/plain"},
+            headers={"Content-Type": "text/plain", **AUTH},
         )
         assert resp.status == 400
         data = await resp.json()
         assert "error" in data
 
     async def test_missing_alerts_returns_400(self, client):
-        resp = await client.post("/webhook", json={"version": "4", "no_alerts": True})
+        resp = await client.post(
+            "/webhook", json={"version": "4", "no_alerts": True}, headers=AUTH
+        )
         assert resp.status == 400
 
     async def test_missing_alertname_returns_400(self, client):
         payload = _valid_payload()
         payload["alerts"][0]["labels"].pop("alertname")
-        resp = await client.post("/webhook", json=payload)
+        resp = await client.post("/webhook", json=payload, headers=AUTH)
         assert resp.status == 400
 
     async def test_get_returns_405(self, client):
@@ -146,7 +154,7 @@ class TestWebhookEndpoint:
 
     async def test_alerts_written_to_jsonl(self, client, tmp_jsonl):
         """Verify that accepted alerts are actually written to the JSONL file."""
-        resp = await client.post("/webhook", json=_valid_payload())
+        resp = await client.post("/webhook", json=_valid_payload(), headers=AUTH)
         assert resp.status == 200
 
         path = Path(tmp_jsonl)
@@ -157,6 +165,107 @@ class TestWebhookEndpoint:
         assert data["alert_type"] == "consensus_desync"
         assert data["severity"] == "high"
         assert data["host"] == "validator-01"
+
+
+class TestWebhookAuth:
+    """Fail-closed shared-secret auth on POST /webhook."""
+
+    async def test_no_token_configured_fails_closed(
+        self, aiohttp_client, tmp_jsonl, tmp_db
+    ):
+        """No token in config -> 503, never unauthenticated acceptance."""
+        app_no_auth = create_app(db_path=tmp_db, jsonl_path=tmp_jsonl)
+        client = await aiohttp_client(app_no_auth)
+        resp = await client.post("/webhook", json=_valid_payload(), headers=AUTH)
+        assert resp.status == 503
+        assert not Path(tmp_jsonl).exists()
+
+    async def test_wrong_token_returns_401(self, client):
+        resp = await client.post(
+            "/webhook",
+            json=_valid_payload(),
+            headers={"X-Hermes-Token": "wrong-token"},
+        )
+        assert resp.status == 401
+
+    async def test_missing_token_returns_401(self, client):
+        resp = await client.post("/webhook", json=_valid_payload())
+        assert resp.status == 401
+
+    async def test_rejections_tracked_in_health(self, client):
+        await client.post("/webhook", json=_valid_payload())  # no header
+        await client.post(
+            "/webhook",
+            json=_valid_payload(),
+            headers={"X-Hermes-Token": "wrong-token"},
+        )
+        resp = await client.get("/health")
+        data = await resp.json()
+        assert data["auth_rejected"] == 2
+
+    async def test_health_open_without_token(self, client):
+        """Liveness probe must not require the token."""
+        resp = await client.get("/health")
+        assert resp.status == 200
+
+    async def test_empty_token_config_fails_closed(
+        self, aiohttp_client, tmp_jsonl, tmp_db
+    ):
+        """An empty-string token must behave like no token: 503, no writes."""
+        app_empty = create_app(db_path=tmp_db, jsonl_path=tmp_jsonl, auth_token="")
+        client = await aiohttp_client(app_empty)
+        resp = await client.post("/webhook", json=_valid_payload(), headers=AUTH)
+        assert resp.status == 503
+        assert not Path(tmp_jsonl).exists()
+
+    async def test_empty_header_value_returns_401(self, client):
+        resp = await client.post(
+            "/webhook", json=_valid_payload(), headers={"X-Hermes-Token": ""}
+        )
+        assert resp.status == 401
+
+    async def test_header_name_case_insensitive(self, client):
+        resp = await client.post(
+            "/webhook",
+            json=_valid_payload(),
+            headers={"x-hermes-token": TEST_AUTH_TOKEN},
+        )
+        assert resp.status == 200
+
+    async def test_auth_checked_before_body_parse(self, client):
+        """Wrong token + invalid JSON body must 401, not 400 — auth first."""
+        resp = await client.post(
+            "/webhook",
+            data="not json",
+            headers={"Content-Type": "text/plain", "X-Hermes-Token": "wrong"},
+        )
+        assert resp.status == 401
+
+    async def test_401_has_no_alert_side_effects(self, client, tmp_jsonl):
+        """Rejections must not touch alert counters or the queue file."""
+        await client.post(
+            "/webhook", json=_valid_payload(), headers={"X-Hermes-Token": "x"}
+        )
+        resp = await client.get("/health")
+        data = await resp.json()
+        assert data["auth_rejected"] == 1
+        assert data["alerts_errors"] == 0
+        assert data["alerts_received"] == 0
+        assert not Path(tmp_jsonl).exists()
+
+    def test_malformed_utf8_header_returns_401_not_500(self, tmp_jsonl):
+        """Lone surrogates in the header value (invalid UTF-8 on the wire)
+        must yield a clean mismatch, never an unhandled UnicodeEncodeError."""
+        handler = WebhookHandler(
+            writer=QueueWriter(path=tmp_jsonl), auth_token=TEST_AUTH_TOKEN
+        )
+        request = types.SimpleNamespace(  # type: ignore[arg-type]
+            headers=CIMultiDict({WebhookHandler.AUTH_HEADER: "bad-\udcff"}),
+            remote="127.0.0.1",
+        )
+        resp = handler._check_auth(request)
+        assert resp is not None
+        assert resp.status == 401
 
 
 def _seed_incident(db_path, alert_type, host, severity, fired_at, resolved_at=None):
@@ -192,7 +301,7 @@ class TestDedupIntegration:
             "high",
             recent,  # within 1-hour cooldown for high severity
         )
-        resp = await client.post("/webhook", json=_valid_payload())
+        resp = await client.post("/webhook", json=_valid_payload(), headers=AUTH)
         data = await resp.json()
         assert data["alerts_deduped"] == 1
         assert data["alerts_processed"] == 0
@@ -204,6 +313,7 @@ class TestDedupIntegration:
         resp = await client.post(
             "/webhook",
             json=_valid_payload(severity="critical"),
+            headers=AUTH,
         )
         data = await resp.json()
         assert data["alerts_processed"] == 1
@@ -221,7 +331,7 @@ class TestDedupIntegration:
             recent,
             resolved,  # resolved
         )
-        resp = await client.post("/webhook", json=_valid_payload())
+        resp = await client.post("/webhook", json=_valid_payload(), headers=AUTH)
         data = await resp.json()
         assert data["alerts_processed"] == 1
         assert data["alerts_deduped"] == 0
@@ -233,6 +343,7 @@ class TestDedupIntegration:
         resp = await client.post(
             "/webhook",
             json=_valid_payload(host="validator-02"),
+            headers=AUTH,
         )
         data = await resp.json()
         assert data["alerts_processed"] == 1
@@ -242,7 +353,7 @@ class TestDedupIntegration:
         """Health endpoint should reflect deduped alert count."""
         recent = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
         _seed_incident(tmp_db, "consensus_desync", "validator-01", "high", recent)
-        await client.post("/webhook", json=_valid_payload())
+        await client.post("/webhook", json=_valid_payload(), headers=AUTH)
         resp = await client.get("/health")
         data = await resp.json()
         assert data["alerts_deduped"] == 1
@@ -256,7 +367,7 @@ class TestStormProtectionIntegration:
         payload = _valid_payload()
         # Send 4 alerts on the same host
         for _ in range(4):
-            resp = await client.post("/webhook", json=payload)
+            resp = await client.post("/webhook", json=payload, headers=AUTH)
 
         data = await resp.json()
         assert data["alerts_bundled"] >= 1
@@ -273,8 +384,12 @@ class TestStormProtectionIntegration:
 
     async def test_cross_host_storm_bundles_alerts(self, client, tmp_jsonl):
         """Same alert type on >=2 hosts within 60s should be bundled."""
-        _ = await client.post("/webhook", json=_valid_payload(host="validator-01"))
-        resp2 = await client.post("/webhook", json=_valid_payload(host="validator-02"))
+        _ = await client.post(
+            "/webhook", json=_valid_payload(host="validator-01"), headers=AUTH
+        )
+        resp2 = await client.post(
+            "/webhook", json=_valid_payload(host="validator-02"), headers=AUTH
+        )
 
         data2 = await resp2.json()
         assert data2["alerts_bundled"] >= 1
@@ -289,8 +404,12 @@ class TestStormProtectionIntegration:
     async def test_health_tracks_bundle_count(self, client):
         """Health endpoint should reflect bundled alert count."""
         # Trigger a cross-host storm
-        await client.post("/webhook", json=_valid_payload(host="validator-01"))
-        await client.post("/webhook", json=_valid_payload(host="validator-02"))
+        await client.post(
+            "/webhook", json=_valid_payload(host="validator-01"), headers=AUTH
+        )
+        await client.post(
+            "/webhook", json=_valid_payload(host="validator-02"), headers=AUTH
+        )
 
         resp = await client.get("/health")
         data = await resp.json()
@@ -298,8 +417,12 @@ class TestStormProtectionIntegration:
 
     async def test_response_includes_bundled_ids(self, client):
         """Response should include IDs of alerts that were bundled."""
-        await client.post("/webhook", json=_valid_payload(host="validator-01"))
-        resp = await client.post("/webhook", json=_valid_payload(host="validator-02"))
+        await client.post(
+            "/webhook", json=_valid_payload(host="validator-01"), headers=AUTH
+        )
+        resp = await client.post(
+            "/webhook", json=_valid_payload(host="validator-02"), headers=AUTH
+        )
 
         data = await resp.json()
         assert "bundled_ids" in data

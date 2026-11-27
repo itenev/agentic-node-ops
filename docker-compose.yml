@@ -42,6 +42,7 @@ services:
       # (DOCKER_SOCKET_PATH) which is not mounted here — container
       # status is reported as "unavailable"; peer/validator counts fall
       # back to Prometheus per the spec's fallback chain.
+      - WEBHOOK_AUTH_TOKEN=${WEBHOOK_AUTH_TOKEN}
     networks:
       - hermes-monitoring
       - ethd_default

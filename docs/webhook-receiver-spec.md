@@ -61,8 +61,37 @@ receivers:
     webhook_configs:
       - url: 'http://webhook-receiver:8090/webhook'
         send_resolved: true   # notify Hermes when alerts clear
-        http_config: {}       # no auth required on the internal network
+        http_config:
+          http_headers:
+            # Alertmanager 0.27+ schema: each header maps to
+            # values/secrets/files lists. `secrets` stay hidden in the AM UI.
+            X-Hermes-Token:
+              secrets: ['<WEBHOOK_AUTH_TOKEN value>']
 ```
+
+## Authentication
+
+The webhook endpoint is protected by a **shared-secret token** (the receiver may be reachable from networks beyond the trusted compose bridge, so it must not accept unauthenticated posts):
+
+- Alertmanager sends the token in the `X-Hermes-Token` header on every POST.
+- The receiver hashes both sides with SHA-256 and compares the digests with `hmac.compare_digest` — constant-time, and the fixed digest length leaks neither token content nor length.
+- Malformed header bytes (aiohttp decodes headers with `surrogateescape`) or a non-UTF-8 `WEBHOOK_AUTH_TOKEN` can never raise inside the handler — they can only mismatch (encoded with `surrogatepass`).
+- **Fail closed:** if `WEBHOOK_AUTH_TOKEN` is not configured (or empty), the receiver rejects every webhook post with `503` — it never falls back to unauthenticated acceptance.
+- Wrong/missing token → `401`, logged with the client address only (the provided token value is never logged).
+- `/health` stays open for liveness probes; it exposes counters only, no sensitive data.
+
+Generate a token:
+
+```
+openssl rand -hex 32
+```
+
+Set it in both places:
+
+| Component | Setting |
+|---|---|
+| webhook-receiver | env `WEBHOOK_AUTH_TOKEN` (compose, from `.env`) |
+| Alertmanager | `webhook_configs[].http_config.http_headers.X-Hermes-Token.secrets` (Alertmanager 0.27+) |
 
 `send_resolved: true` is required so Hermes can close incidents and trigger post-incident feedback collection when an alert clears.
 
@@ -197,6 +226,16 @@ def should_process(alert, db):
   "raw_labels": {}
 }
 ```
+
+### Label hardening (injection boundary)
+
+Alert labels are attacker-controlled input — any client that can reach the webhook can set them. Fields that leave the receiver's process are validated at the schema boundary:
+
+- `container` (and the `container_name`/`service` fallbacks) must be a string matching the Docker name charset (`[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}` — `fullmatch`, so Python's `$`-before-trailing-newline quirk can't smuggle `\n`). A failing or non-string label is logged and dropped to `null` — the alert is still ingested, just without container context. Fail-open for ingestion, fail-closed for the injection surface. The unsanitized original stays in `raw_labels` for audit; `alert.container` is the validated, safe field.
+- `client` is already allowlisted (`lighthouse`, `prysm`, ...).
+- As defense in depth, the context fetcher percent-encodes the container name again when building the Docker API request line, so even a value that bypassed validation cannot alter the HTTP request (CRLF injection / request smuggling).
+
+This is the boundary any future feature must preserve before interpolating alert fields into commands, URLs or API paths.
 
 **Key principle:** pre-fetch the cheap context snapshot *at receive time*, not when the LLM processes it.
 
